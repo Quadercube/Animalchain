@@ -2,7 +2,7 @@
 const STORAGE_KEY = "animalchain_state_v2";
 
 const SUPABASE_URL = "https://xbncxguszajafewaullp.supabase.co";
-const SUPABASE_KEY = "DEIN_PUBLIC_ANON_KEY_HIER_EINFÜGEN";
+const SUPABASE_KEY = "sb_publishable_cft_HvPmZgUTVRKI8aFYTg_YMO4HnNF";
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
