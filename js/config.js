@@ -3,8 +3,8 @@
 // Niemals service_role key oder database password hier einfügen.
 
 const ANIMALCHAIN_CONFIG = {
-  supabaseUrl: "https://DEIN-PROJEKT.supabase.co",
-  supabaseKey: "DEIN_PUBLIC_ANON_ODER_PUBLISHABLE_KEY"
+  supabaseUrl: "https://Animalchain.supabase.co",
+  supabaseKey: "sb_publishable_cft_HvPmZgUTVRKI8aFYTg_YMO4HnNF"
 };
 
 const supabaseClient = window.supabase.createClient(
