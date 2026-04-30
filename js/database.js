@@ -1,11 +1,11 @@
 // js/database.js
 
-const supabaseClient = window.supabase.createClient(
+var supabaseClient = window.supabase.createClient(
   ANIMALCHAIN_CONFIG.supabaseUrl,
   ANIMALCHAIN_CONFIG.supabaseKey
 );
 
-window.AnimalchainDB = {
+var AnimalchainDB = window.AnimalchainDB = {
   loadApprovedAnimals,
   suggestAnimal,
   createOnlineGame,
