@@ -6,16 +6,7 @@ const SUPABASE_KEY = "sb_publishable_cft_HvPmZgUTVRKI8aFYTg_YMO4HnNF";
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const DEFAULT_ANIMALS = [
-  "Aal", "Ameise", "Antilope", "Ara", "Bär", "Biber", "Biene", "Bonobo",
-  "Dachs", "Delfin", "Dingo", "Eisbär", "Eidechse", "Eichhörnchen", "Esel",
-  "Falke", "Fuchs", "Gans", "Gepard", "Giraffe", "Gorilla", "Hamster",
-  "Hase", "Hirsch", "Hund", "Igel", "Jaguar", "Kamel", "Katze", "Koala",
-  "Krokodil", "Kuh", "Lama", "Leopard", "Luchs", "Marder", "Maus",
-  "Meerschweinchen", "Nashorn", "Nilpferd", "Otter", "Panda", "Papagei",
-  "Pferd", "Pinguin", "Qualle", "Rabe", "Reh", "Roter Panda", "Schaf",
-  "Schlange", "Tiger", "Turmfalke", "Uhu", "Wal", "Wolf", "Zebra", "Ziege"
-];
+const DEFAULT_ANIMALS = [];
 
 const state = loadState();
 
