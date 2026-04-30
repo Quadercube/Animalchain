@@ -1,5 +1,10 @@
 // app.js
-const STORAGE_KEY = "animalchain_state_v1";
+const STORAGE_KEY = "animalchain_state_v2";
+
+const SUPABASE_URL = "https://xbncxguszajafewaullp.supabase.co";
+const SUPABASE_KEY = "DEIN_PUBLIC_ANON_KEY_HIER_EINFÜGEN";
+
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const DEFAULT_ANIMALS = [
   "Aal", "Ameise", "Antilope", "Ara", "Bär", "Biber", "Biene", "Bonobo",
@@ -45,10 +50,20 @@ const elements = {
   resetAppButton: document.querySelector("#resetAppButton")
 };
 
+let lobbyRefreshTimer = null;
+
 init();
 
-function init() {
+async function init() {
   bindEvents();
+  renderAll();
+  await loadAnimalsFromSupabase();
+
+  if (state.currentGameId) {
+    await refreshLobbyFromSupabase();
+    startLobbyRefresh();
+  }
+
   renderAll();
 }
 
@@ -71,6 +86,8 @@ function loadState() {
   const fallback = {
     guestName: "Gast",
     lobbyCode: "",
+    currentGameId: "",
+    localSeatId: "",
     players: [],
     strictMode: true,
     animals: [...DEFAULT_ANIMALS],
@@ -100,6 +117,22 @@ function renderAll() {
   renderAnimals();
 }
 
+async function loadAnimalsFromSupabase() {
+  const { data, error } = await supabaseClient
+    .from("animals")
+    .select("name")
+    .order("name", { ascending: true });
+
+  if (error) {
+    setMessage(`Supabase-Tiere konnten nicht geladen werden: ${error.message}`, "warning");
+    return;
+  }
+
+  const onlineAnimals = data.map((animal) => animal.name);
+  state.animals = uniqueAnimals([...DEFAULT_ANIMALS, ...onlineAnimals]);
+  saveState();
+}
+
 function handleGuestSubmit(event) {
   event.preventDefault();
 
@@ -110,7 +143,6 @@ function handleGuestSubmit(event) {
   }
 
   state.guestName = name;
-  ensureHostPlayer();
   saveState();
   renderAll();
   setMessage(`Gastname gespeichert: ${name}`, "success");
@@ -121,16 +153,59 @@ function renderGuest() {
   elements.guestName.value = state.guestName === "Gast" ? "" : state.guestName;
 }
 
-function createLobby() {
-  state.lobbyCode = generateLobbyCode();
+async function createLobby() {
+  const code = generateLobbyCode();
+
+  const { data: game, error: gameError } = await supabaseClient
+    .from("games")
+    .insert({
+      code,
+      status: "waiting",
+      max_players: 4,
+      last_animal: "Turmfalke",
+      current_required_letter: "e",
+      current_turn_order: 1
+    })
+    .select()
+    .single();
+
+  if (gameError) {
+    setMessage(`Lobby konnte nicht erstellt werden: ${gameError.message}`, "error");
+    return;
+  }
+
+  const { data: player, error: playerError } = await supabaseClient
+    .from("game_players")
+    .insert({
+      game_id: game.id,
+      user_id: null,
+      guest_name: state.guestName,
+      turn_order: 1
+    })
+    .select()
+    .single();
+
+  if (playerError) {
+    setMessage(`Spieler konnte nicht erstellt werden: ${playerError.message}`, "error");
+    return;
+  }
+
+  state.lobbyCode = game.code;
+  state.currentGameId = game.id;
+  state.localSeatId = player.id;
   state.players = [];
-  ensureHostPlayer();
+  state.moves = [];
+  state.lastAnimal = "Turmfalke";
+  state.requiredLetter = "E";
+  state.currentTurnIndex = 0;
+
   saveState();
-  renderAll();
+  await refreshLobbyFromSupabase();
+  startLobbyRefresh();
   setMessage(`Lobby ${state.lobbyCode} erstellt. Gib den Code deinem Freund.`, "success");
 }
 
-function joinLobby(event) {
+async function joinLobby(event) {
   event.preventDefault();
 
   const code = normalizeLobbyCode(elements.joinCode.value);
@@ -139,10 +214,63 @@ function joinLobby(event) {
     return;
   }
 
-  state.lobbyCode = code;
-  ensureHostPlayer();
+  const { data: game, error: gameError } = await supabaseClient
+    .from("games")
+    .select("*")
+    .eq("code", code)
+    .single();
+
+  if (gameError || !game) {
+    setMessage(`Lobby ${code} wurde nicht gefunden.`, "error");
+    return;
+  }
+
+  const { data: players, error: playersError } = await supabaseClient
+    .from("game_players")
+    .select("*")
+    .eq("game_id", game.id)
+    .order("turn_order", { ascending: true });
+
+  if (playersError) {
+    setMessage(`Lobby-Spieler konnten nicht geladen werden: ${playersError.message}`, "error");
+    return;
+  }
+
+  if (players.length >= game.max_players) {
+    setMessage("Diese Lobby ist voll.", "warning");
+    return;
+  }
+
+  const nextTurnOrder = players.length + 1;
+
+  const { data: player, error: playerError } = await supabaseClient
+    .from("game_players")
+    .insert({
+      game_id: game.id,
+      user_id: null,
+      guest_name: state.guestName,
+      turn_order: nextTurnOrder
+    })
+    .select()
+    .single();
+
+  if (playerError) {
+    setMessage(`Beitritt fehlgeschlagen: ${playerError.message}`, "error");
+    return;
+  }
+
+  await supabaseClient
+    .from("games")
+    .update({ status: "playing" })
+    .eq("id", game.id);
+
+  state.lobbyCode = game.code;
+  state.currentGameId = game.id;
+  state.localSeatId = player.id;
+
   saveState();
-  renderAll();
+  await refreshLobbyFromSupabase();
+  startLobbyRefresh();
   setMessage(`Du bist Lobby ${code} beigetreten.`, "success");
 }
 
@@ -165,26 +293,9 @@ async function copyLobbyCode() {
   }
 }
 
-function ensureHostPlayer() {
-  const hostExists = state.players.some((player) => player.role === "Host");
-
-  if (!hostExists) {
-    state.players.unshift({
-      id: crypto.randomUUID(),
-      name: state.guestName,
-      role: "Host"
-    });
-    return;
-  }
-
-  state.players = state.players.map((player) => (
-    player.role === "Host" ? { ...player, name: state.guestName } : player
-  ));
-}
-
-function addFakePlayer() {
-  if (!state.lobbyCode) {
-    createLobby();
+async function addFakePlayer() {
+  if (!state.currentGameId) {
+    await createLobby();
   }
 
   const names = ["moboop", "FalkeKing", "ZooPro", "PandaBoss", "Wolfi"];
@@ -192,18 +303,25 @@ function addFakePlayer() {
   const nextName = names.find((name) => !usedNames.has(name)) || `Gast ${state.players.length + 1}`;
 
   if (state.players.length >= 4) {
-    setMessage("Für diese Demo sind maximal 4 Spieler in der Lobby.", "warning");
+    setMessage("Maximal 4 Spieler in der Lobby.", "warning");
     return;
   }
 
-  state.players.push({
-    id: crypto.randomUUID(),
-    name: nextName,
-    role: "Gast"
-  });
+  const { error } = await supabaseClient
+    .from("game_players")
+    .insert({
+      game_id: state.currentGameId,
+      user_id: null,
+      guest_name: nextName,
+      turn_order: state.players.length + 1
+    });
 
-  saveState();
-  renderPlayers();
+  if (error) {
+    setMessage(`Testspieler konnte nicht gespeichert werden: ${error.message}`, "error");
+    return;
+  }
+
+  await refreshLobbyFromSupabase();
 }
 
 function renderPlayers() {
@@ -219,7 +337,8 @@ function renderPlayers() {
         <strong>${escapeHtml(player.name)}</strong>
         <span>Spieler ${index + 1}</span>
       </span>
-      ${player.role === "Host" ? `<span class="host-pill">Host</span>` : ""}
+      ${index === 0 ? `<span class="host-pill">Host</span>` : ""}
+      ${player.id === state.localSeatId ? `<span class="host-pill">Du</span>` : ""}
     </article>
   `).join("");
 }
@@ -229,7 +348,7 @@ function handleStrictModeChange() {
   saveState();
 }
 
-function playAnimal(event) {
+async function playAnimal(event) {
   event.preventDefault();
 
   const animalName = cleanAnimal(elements.animalInput.value);
@@ -248,7 +367,7 @@ function playAnimal(event) {
   }
 
   if (state.strictMode && !hasAnimal(animalName)) {
-    setMessage(`"${animalName}" ist noch nicht in der lokalen Tierliste.`, "error");
+    setMessage(`"${animalName}" ist noch nicht in der Tierdatenbank.`, "error");
     return;
   }
 
@@ -257,6 +376,28 @@ function playAnimal(event) {
     return;
   }
 
+  const player = getCurrentPlayer();
+
+  if (state.currentGameId && player.id !== state.localSeatId) {
+    setMessage(`${player.name} ist dran. Warte auf deinen Zug.`, "warning");
+    return;
+  }
+
+  if (!hasAnimal(animalName)) {
+    await suggestAnimal(animalName);
+    state.animals.push(toTitleCase(animalName));
+    sortAnimals();
+  }
+
+  if (state.currentGameId) {
+    await playOnlineAnimal(animalName, normalizedAnimal);
+    return;
+  }
+
+  playLocalAnimal(animalName, normalizedAnimal);
+}
+
+function playLocalAnimal(animalName, normalizedAnimal) {
   const player = getCurrentPlayer();
   const move = {
     id: crypto.randomUUID(),
@@ -270,15 +411,72 @@ function playAnimal(event) {
   state.requiredLetter = getLastLetter(normalizedAnimal).toUpperCase();
   state.currentTurnIndex = getNextTurnIndex();
 
-  if (!hasAnimal(move.animal)) {
-    state.animals.push(move.animal);
-    sortAnimals();
-  }
-
   elements.animalInput.value = "";
   saveState();
   renderAll();
   setMessage(`${move.playerName} hat "${move.animal}" gespielt.`, "success");
+}
+
+async function playOnlineAnimal(animalName, normalizedAnimal) {
+  const nextRequiredLetter = getLastLetter(normalizedAnimal);
+  const nextTurnOrder = getNextOnlineTurnOrder();
+  const moveNumber = state.moves.length + 1;
+
+  const { error: moveError } = await supabaseClient
+    .from("moves")
+    .insert({
+      game_id: state.currentGameId,
+      game_player_id: state.localSeatId,
+      player_id: null,
+      animal_name: toTitleCase(animalName),
+      normalized_animal_name: normalizedAnimal,
+      guest_name: state.guestName,
+      required_letter: state.requiredLetter.toLowerCase(),
+      next_required_letter: nextRequiredLetter,
+      move_number: moveNumber
+    });
+
+  if (moveError) {
+    setMessage(`Spielzug konnte nicht gespeichert werden: ${moveError.message}`, "error");
+    return;
+  }
+
+  const { error: gameError } = await supabaseClient
+    .from("games")
+    .update({
+      last_animal: toTitleCase(animalName),
+      current_required_letter: nextRequiredLetter,
+      current_turn_order: nextTurnOrder,
+      status: "playing"
+    })
+    .eq("id", state.currentGameId);
+
+  if (gameError) {
+    setMessage(`Lobby konnte nicht aktualisiert werden: ${gameError.message}`, "error");
+    return;
+  }
+
+  elements.animalInput.value = "";
+  await refreshLobbyFromSupabase();
+  setMessage(`${state.guestName} hat "${toTitleCase(animalName)}" gespielt.`, "success");
+}
+
+async function suggestAnimal(animalName) {
+  const normalizedName = normalizeAnimal(animalName);
+
+  const { error } = await supabaseClient
+    .from("animal_suggestions")
+    .insert({
+      name: toTitleCase(animalName),
+      normalized_name: normalizedName,
+      first_letter: getFirstLetter(normalizedName),
+      last_letter: getLastLetter(normalizedName),
+      status: "pending"
+    });
+
+  if (error) {
+    setMessage(`Tier-Vorschlag konnte nicht gespeichert werden: ${error.message}`, "warning");
+  }
 }
 
 function renderGame() {
@@ -314,12 +512,40 @@ function showHint() {
   setMessage(`Tipp: ${hint}`, "success");
 }
 
-function startNewRound() {
+async function startNewRound() {
   const startAnimals = ["Turmfalke", "Hase", "Eisbär", "Roter Panda", "Delfin", "Giraffe"];
   const startAnimal = startAnimals[Math.floor(Math.random() * startAnimals.length)];
+  const requiredLetter = getLastLetter(normalizeAnimal(startAnimal));
+
+  if (state.currentGameId) {
+    const { error } = await supabaseClient
+      .from("games")
+      .update({
+        last_animal: startAnimal,
+        current_required_letter: requiredLetter,
+        current_turn_order: 1,
+        status: "playing"
+      })
+      .eq("id", state.currentGameId);
+
+    if (error) {
+      setMessage(`Neue Runde konnte nicht gestartet werden: ${error.message}`, "error");
+      return;
+    }
+
+    state.moves = [];
+    state.lastAnimal = startAnimal;
+    state.requiredLetter = requiredLetter.toUpperCase();
+    state.currentTurnIndex = 0;
+
+    saveState();
+    renderAll();
+    setMessage(`Neue Runde gestartet. Erstes Tier: ${startAnimal}`, "success");
+    return;
+  }
 
   state.lastAnimal = startAnimal;
-  state.requiredLetter = getLastLetter(normalizeAnimal(startAnimal)).toUpperCase();
+  state.requiredLetter = requiredLetter.toUpperCase();
   state.moves = [];
   state.currentTurnIndex = 0;
 
@@ -328,7 +554,7 @@ function startNewRound() {
   setMessage(`Neue Runde gestartet. Erstes Tier: ${startAnimal}`, "success");
 }
 
-function addAnimal(event) {
+async function addAnimal(event) {
   event.preventDefault();
 
   const animalName = cleanAnimal(elements.newAnimalInput.value);
@@ -342,13 +568,15 @@ function addAnimal(event) {
     return;
   }
 
+  await suggestAnimal(animalName);
+
   state.animals.push(toTitleCase(animalName));
   sortAnimals();
   elements.newAnimalInput.value = "";
 
   saveState();
   renderAnimals();
-  setMessage(`"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`, "success");
+  setMessage(`"${toTitleCase(animalName)}" wurde vorgeschlagen und lokal hinzugefügt.`, "success");
 }
 
 function renderAnimals() {
@@ -371,6 +599,73 @@ function resetApp() {
   window.location.reload();
 }
 
+async function refreshLobbyFromSupabase() {
+  if (!state.currentGameId) return;
+
+  const { data: game, error: gameError } = await supabaseClient
+    .from("games")
+    .select("*")
+    .eq("id", state.currentGameId)
+    .single();
+
+  if (gameError) {
+    setMessage(`Lobby konnte nicht geladen werden: ${gameError.message}`, "warning");
+    return;
+  }
+
+  const { data: players, error: playersError } = await supabaseClient
+    .from("game_players")
+    .select("*")
+    .eq("game_id", state.currentGameId)
+    .order("turn_order", { ascending: true });
+
+  if (playersError) {
+    setMessage(`Spieler konnten nicht geladen werden: ${playersError.message}`, "warning");
+    return;
+  }
+
+  const { data: moves, error: movesError } = await supabaseClient
+    .from("moves")
+    .select("*")
+    .eq("game_id", state.currentGameId)
+    .order("move_number", { ascending: true });
+
+  if (movesError) {
+    setMessage(`Spielzüge konnten nicht geladen werden: ${movesError.message}`, "warning");
+    return;
+  }
+
+  state.lobbyCode = game.code;
+  state.lastAnimal = game.last_animal || "Turmfalke";
+  state.requiredLetter = (game.current_required_letter || "e").toUpperCase();
+  state.currentTurnIndex = Math.max((game.current_turn_order || 1) - 1, 0);
+
+  state.players = players.map((player) => ({
+    id: player.id,
+    name: player.guest_name,
+    role: player.turn_order === 1 ? "Host" : "Gast",
+    turnOrder: player.turn_order
+  }));
+
+  state.moves = moves.map((move) => ({
+    id: move.id,
+    animal: move.animal_name,
+    playerName: move.guest_name || "Gast",
+    createdAt: move.created_at
+  }));
+
+  saveState();
+  renderAll();
+}
+
+function startLobbyRefresh() {
+  if (lobbyRefreshTimer) {
+    clearInterval(lobbyRefreshTimer);
+  }
+
+  lobbyRefreshTimer = setInterval(refreshLobbyFromSupabase, 2500);
+}
+
 function getCurrentPlayer() {
   if (state.players.length === 0) {
     return { id: "solo", name: state.guestName, role: "Solo" };
@@ -384,15 +679,33 @@ function getNextTurnIndex() {
   return (state.currentTurnIndex + 1) % state.players.length;
 }
 
+function getNextOnlineTurnOrder() {
+  if (state.players.length === 0) return 1;
+  return ((state.currentTurnIndex + 1) % state.players.length) + 1;
+}
+
 function hasAnimal(name) {
   const normalizedName = normalizeAnimal(name);
   return state.animals.some((animal) => normalizeAnimal(animal) === normalizedName);
 }
 
+function uniqueAnimals(animals) {
+  const normalizedMap = new Map();
+
+  animals.forEach((animal) => {
+    const cleanAnimalName = toTitleCase(animal);
+    const normalizedAnimalName = normalizeAnimal(cleanAnimalName);
+
+    if (normalizedAnimalName) {
+      normalizedMap.set(normalizedAnimalName, cleanAnimalName);
+    }
+  });
+
+  return [...normalizedMap.values()].sort((a, b) => a.localeCompare(b, "de"));
+}
+
 function sortAnimals() {
-  state.animals = [...new Set(state.animals.map(toTitleCase))].sort((a, b) => (
-    a.localeCompare(b, "de")
-  ));
+  state.animals = uniqueAnimals(state.animals);
 }
 
 function setMessage(text, type = "") {
@@ -431,7 +744,7 @@ function getLastLetter(value) {
 function generateLobbyCode() {
   const words = ["WOLF", "FALK", "PANDA", "LUCHS", "ZEBRA", "BIBER"];
   const word = words[Math.floor(Math.random() * words.length)];
-  const number = Math.floor(10 + Math.random() * 90);
+  const number = Math.floor(100 + Math.random() * 900);
   return `${word}${number}`.slice(0, 8);
 }
 
