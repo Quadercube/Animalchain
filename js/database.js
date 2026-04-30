@@ -1,3 +1,175 @@
 // js/database.js
-const AnimalchainDB=(()=>{async function loadApprovedAnimals(){const{data,error}=await supabaseClient.from("animals").select("id,name,normalized_name,first_letter,last_letter").eq("status","approved").order("name",{ascending:true});if(error)throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);return data||[]}async function suggestAnimal(name){const n=normalizeAnimal(name);const f=getFirstLetter(n);const l=getLastLetter(n);if(!n||!f||!l)throw new Error("Ungültiger Tiername.");const{error}=await supabaseClient.from("animal_suggestions").insert({name:toTitleCase(name),normalized_name:n,first_letter:f,last_letter:l,status:"pending"});if(error)throw new Error(`Tier konnte nicht vorgeschlagen werden: ${error.message}`)}async function createGame({code,maxPlayers=4,lastAnimal="Turmfalke",mode="online"}){const{data,error}=await supabaseClient.from("games").insert({code,status:"waiting",max_players:maxPlayers,last_animal:lastAnimal,current_required_letter:getLastLetter(normalizeAnimal(lastAnimal)),current_turn_order:1,mode}).select().single();if(error)throw new Error(`Lobby konnte nicht erstellt werden: ${error.message}`);return data}async function findGameByCode(code){const{data,error}=await supabaseClient.from("games").select("*").eq("code",code).single();if(error)throw new Error("Lobby wurde nicht gefunden.");return data}async function addGamePlayer({gameId,guestName,turnOrder}){const{data,error}=await supabaseClient.from("game_players").insert({game_id:gameId,user_id:null,guest_name:guestName,turn_order:turnOrder}).select().single();if(error)throw new Error(`Spieler konnte nicht beitreten: ${error.message}`);return data}async function loadGamePlayers(gameId){const{data,error}=await supabaseClient.from("game_players").select("*").eq("game_id",gameId).order("turn_order",{ascending:true});if(error)throw new Error(`Spieler konnten nicht geladen werden: ${error.message}`);return data||[]}async function loadGameMoves(gameId){const{data,error}=await supabaseClient.from("moves").select("*").eq("game_id",gameId).order("move_number",{ascending:true});if(error)throw new Error(`Spielzüge konnten nicht geladen werden: ${error.message}`);return data||[]}async function loadGameSnapshot(gameId){const{data:game,error}=await supabaseClient.from("games").select("*").eq("id",gameId).single();if(error)throw new Error(`Spiel konnte nicht geladen werden: ${error.message}`);const[players,moves]=await Promise.all([loadGamePlayers(gameId),loadGameMoves(gameId)]);return{game,players,moves}}async function insertMove({gameId,localSeatId,guestName,animalName,normalizedAnimalName,requiredLetter,nextRequiredLetter,moveNumber}){const{error}=await supabaseClient.from("moves").insert({game_id:gameId,game_player_id:localSeatId,player_id:null,animal_name:toTitleCase(animalName),normalized_animal_name:normalizedAnimalName,guest_name:guestName,required_letter:requiredLetter,next_required_letter:nextRequiredLetter,move_number:moveNumber});if(error)throw new Error(`Spielzug konnte nicht gespeichert werden: ${error.message}`)}async function updateGameTurn({gameId,animalName,nextRequiredLetter,nextTurnOrder,status="playing"}){const{error}=await supabaseClient.from("games").update({last_animal:toTitleCase(animalName),current_required_letter:nextRequiredLetter,current_turn_order:nextTurnOrder,status}).eq("id",gameId);if(error)throw new Error(`Lobby konnte nicht aktualisiert werden: ${error.message}`)}async function resetGameRound({gameId,startAnimal}){const{error:deleteError}=await supabaseClient.from("moves").delete().eq("game_id",gameId);if(deleteError)throw new Error(`Alte Züge konnten nicht gelöscht werden: ${deleteError.message}`);await updateGameTurn({gameId,animalName:startAnimal,nextRequiredLetter:getLastLetter(normalizeAnimal(startAnimal)),nextTurnOrder:1,status:"playing"})}function normalizeAnimal(value){return String(value).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/ß/g,"ss").replace(/[^a-z\s-]/g,"").replace(/\s+/g," ")}function getFirstLetter(value){return String(value).replace(/[^a-z]/g,"").charAt(0)||""}function getLastLetter(value){const letters=String(value).replace(/[^a-z]/g,"");return letters.charAt(letters.length-1)||""}function toTitleCase(value){return String(value).trim().toLowerCase().split(" ").map(part=>part?part.charAt(0).toUpperCase()+part.slice(1):"").join(" ")}function escapeHtml(value){return String(value).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[ch]))}function generateLobbyCode(){const words=["WOLF","FALK","PANDA","LUCHS","ZEBRA","BIBER","EULE","TIGER"];return`${words[Math.floor(Math.random()*words.length)]}${Math.floor(100+Math.random()*900)}`.slice(0,8)}function normalizeLobbyCode(value){return String(value).trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,8)}function cleanName(value){return String(value).trim().replace(/\s+/g," ").slice(0,24)}function cleanAnimal(value){return String(value).trim().replace(/\s+/g," ")}return{loadApprovedAnimals,suggestAnimal,createGame,findGameByCode,addGamePlayer,loadGamePlayers,loadGameMoves,loadGameSnapshot,insertMove,updateGameTurn,resetGameRound,normalizeAnimal,getFirstLetter,getLastLetter,toTitleCase,escapeHtml,generateLobbyCode,normalizeLobbyCode,cleanName,cleanAnimal}})();
-const{normalizeAnimal,getFirstLetter,getLastLetter,toTitleCase,escapeHtml,generateLobbyCode,normalizeLobbyCode,cleanName,cleanAnimal}=AnimalchainDB;
+
+const supabaseClient = window.supabase.createClient(
+  ANIMALCHAIN_CONFIG.supabaseUrl,
+  ANIMALCHAIN_CONFIG.supabaseKey
+);
+
+async function loadApprovedAnimals() {
+  const { data, error } = await supabaseClient
+    .from("animals")
+    .select("name, normalized_name, first_letter, last_letter")
+    .eq("status", "approved")
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data || [];
+}
+
+async function suggestAnimal(name) {
+  const normalizedName = normalizeAnimalName(name);
+
+  const { error } = await supabaseClient
+    .from("animal_suggestions")
+    .insert({
+      name: toTitleCase(name),
+      normalized_name: normalizedName,
+      first_letter: getFirstLetter(normalizedName),
+      last_letter: getLastLetter(normalizedName),
+      status: "pending"
+    });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function createOnlineGame(code, guestName, maxPlayers = 4) {
+  const { data: game, error: gameError } = await supabaseClient
+    .from("games")
+    .insert({
+      code,
+      status: "waiting",
+      max_players: maxPlayers,
+      last_animal: "Turmfalke",
+      current_required_letter: "e",
+      current_turn_order: 1
+    })
+    .select()
+    .single();
+
+  if (gameError) {
+    throw new Error(gameError.message);
+  }
+
+  const { data: player, error: playerError } = await supabaseClient
+    .from("game_players")
+    .insert({
+      game_id: game.id,
+      user_id: null,
+      guest_name: guestName,
+      turn_order: 1
+    })
+    .select()
+    .single();
+
+  if (playerError) {
+    throw new Error(playerError.message);
+  }
+
+  return { game, player };
+}
+
+async function findGameByCode(code) {
+  const { data, error } = await supabaseClient
+    .from("games")
+    .select("*")
+    .eq("code", code)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data;
+}
+
+async function loadGamePlayers(gameId) {
+  const { data, error } = await supabaseClient
+    .from("game_players")
+    .select("*")
+    .eq("game_id", gameId)
+    .order("turn_order", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data || [];
+}
+
+async function joinOnlineGame(game, guestName) {
+  const players = await loadGamePlayers(game.id);
+
+  if (players.length >= game.max_players) {
+    throw new Error("Diese Lobby ist voll.");
+  }
+
+  const { data: player, error } = await supabaseClient
+    .from("game_players")
+    .insert({
+      game_id: game.id,
+      user_id: null,
+      guest_name: guestName,
+      turn_order: players.length + 1
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  await supabaseClient
+    .from("games")
+    .update({ status: "playing" })
+    .eq("id", game.id);
+
+  return player;
+}
+
+async function loadGameMoves(gameId) {
+  const { data, error } = await supabaseClient
+    .from("moves")
+    .select("*")
+    .eq("game_id", gameId)
+    .order("move_number", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data || [];
+}
+
+function normalizeAnimalName(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z\s-]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function getFirstLetter(value) {
+  return value.replace(/[^a-z]/g, "").charAt(0) || "";
+}
+
+function getLastLetter(value) {
+  const letters = value.replace(/[^a-z]/g, "");
+  return letters.charAt(letters.length - 1) || "";
+}
+
+function toTitleCase(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .split(" ")
+    .map((part) => part ? part.charAt(0).toUpperCase() + part.slice(1) : "")
+    .join(" ");
+}
