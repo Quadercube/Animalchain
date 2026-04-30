@@ -1,4 +1,254 @@
 // js/practice.js
-const state={animals:[],lastAnimal:"Turmfalke",requiredLetter:"e",moves:[]};
-const el={lastAnimal:document.querySelector("#lastAnimal"),requiredLetter:document.querySelector("#requiredLetter"),moveCount:document.querySelector("#moveCount"),animalForm:document.querySelector("#animalForm"),animalInput:document.querySelector("#animalInput"),gameMessage:document.querySelector("#gameMessage"),hintButton:document.querySelector("#hintButton"),newRoundButton:document.querySelector("#newRoundButton"),movesList:document.querySelector("#movesList"),suggestForm:document.querySelector("#suggestForm"),suggestInput:document.querySelector("#suggestInput"),animalCount:document.querySelector("#animalCount")};
-init();async function init(){el.animalForm.addEventListener("submit",handlePlayerMove);el.hintButton.addEventListener("click",showHint);el.newRoundButton.addEventListener("click",()=>startNewRound(true));el.suggestForm.addEventListener("submit",suggestAnimal);try{state.animals=await AnimalchainDB.loadApprovedAnimals();startNewRound(false);setMessage("Tierdatenbank geladen. Du bist dran.","success")}catch(e){setMessage(e.message,"error")}render()}function startNewRound(show){const a=pickRandomAnimal()||{name:"Turmfalke"};state.lastAnimal=a.name;state.requiredLetter=getLastLetter(normalizeAnimal(a.name));state.moves=[];render();if(show)setMessage(`Neue Runde. Starttier: ${state.lastAnimal}`,"success")}async function handlePlayerMove(event){event.preventDefault();const name=cleanAnimal(el.animalInput.value);const v=validateAnimal(name);if(!v.ok){setMessage(v.message,v.type);return}addMove("Du",name);el.animalInput.value="";render();await new Promise(r=>setTimeout(r,450));computerMove()}function computerMove(){const options=getAvailableAnimalsForLetter(state.requiredLetter);if(options.length===0){setMessage(`Der Computer findet kein Tier mit ${state.requiredLetter.toUpperCase()}. Du gewinnst!`,"success");return}const a=options[Math.floor(Math.random()*options.length)];addMove("Computer",a.name);render();setMessage(`Computer spielt: ${a.name}. Jetzt brauchst du ${state.requiredLetter.toUpperCase()}.`,"success")}function validateAnimal(name){if(!name)return{ok:false,type:"warning",message:"Bitte gib ein Tier ein."};const n=normalizeAnimal(name);if(getFirstLetter(n)!==state.requiredLetter)return{ok:false,type:"error",message:`Dein Tier muss mit ${state.requiredLetter.toUpperCase()} anfangen.`};if(!findAnimal(name))return{ok:false,type:"error",message:`"${name}" ist nicht in der Supabase-Tierdatenbank. Du kannst es unten vorschlagen.`};if(state.moves.some(m=>normalizeAnimal(m.animal)===n))return{ok:false,type:"error",message:`"${name}" wurde schon gespielt.`};return{ok:true}}function addMove(playerName,animalName){const n=normalizeAnimal(animalName);state.moves.push({playerName,animal:toTitleCase(animalName)});state.lastAnimal=toTitleCase(animalName);state.requiredLetter=getLastLetter(n)}function showHint(){const options=getAvailableAnimalsForLetter(state.requiredLetter);if(options.length===0){setMessage(`Kein Tipp für ${state.requiredLetter.toUpperCase()} gefunden.`,"warning");return}const hint=options[Math.floor(Math.random()*options.length)];setMessage(`Tipp: ${hint.name}`,"success")}async function suggestAnimal(event){event.preventDefault();const name=cleanAnimal(el.suggestInput.value);if(!name){setMessage("Bitte gib ein Tier ein.","warning");return}try{await AnimalchainDB.suggestAnimal(name);el.suggestInput.value="";setMessage(`"${toTitleCase(name)}" wurde in Supabase vorgeschlagen.`,"success")}catch(e){setMessage(e.message,"error")}}function findAnimal(name){const n=normalizeAnimal(name);return state.animals.find(a=>normalizeAnimal(a.name)===n)}function getAvailableAnimalsForLetter(letter){const used=new Set(state.moves.map(m=>normalizeAnimal(m.animal)));return state.animals.filter(a=>{const n=normalizeAnimal(a.name);return getFirstLetter(n)===letter&&!used.has(n)})}function pickRandomAnimal(){return state.animals.length?state.animals[Math.floor(Math.random()*state.animals.length)]:null}function render(){el.lastAnimal.textContent=state.lastAnimal;el.requiredLetter.textContent=state.requiredLetter.toUpperCase();el.moveCount.textContent=String(state.moves.length);el.animalCount.textContent=`${state.animals.length} Tiere aus Supabase geladen`;el.movesList.innerHTML=state.moves.length?state.moves.map(m=>`<li><strong>${escapeHtml(m.animal)}</strong> <span class="hint">von ${escapeHtml(m.playerName)}</span></li>`).join(""):`<li><strong>${escapeHtml(state.lastAnimal)}</strong> <span class="hint">Starttier</span></li>`}function setMessage(text,type=""){el.gameMessage.textContent=text;el.gameMessage.className=`message ${type}`.trim()}
+
+const practiceState = {
+  animals: [],
+  lastAnimal: "Turmfalke",
+  requiredLetter: "e",
+  moves: []
+};
+
+const practiceElements = {
+  lastAnimal: document.querySelector("#lastAnimal"),
+  requiredLetter: document.querySelector("#requiredLetter"),
+  moveCount: document.querySelector("#moveCount"),
+  animalForm: document.querySelector("#animalForm"),
+  animalInput: document.querySelector("#animalInput"),
+  gameMessage: document.querySelector("#gameMessage"),
+  hintButton: document.querySelector("#hintButton"),
+  newRoundButton: document.querySelector("#newRoundButton"),
+  movesList: document.querySelector("#movesList"),
+  suggestForm: document.querySelector("#suggestForm"),
+  suggestInput: document.querySelector("#suggestInput"),
+  animalCount: document.querySelector("#animalCount")
+};
+
+initPractice();
+
+async function initPractice() {
+  practiceElements.animalForm.addEventListener("submit", handlePlayerMove);
+  practiceElements.hintButton.addEventListener("click", showHint);
+  practiceElements.newRoundButton.addEventListener("click", () => startNewRound(true));
+  practiceElements.suggestForm.addEventListener("submit", handleSuggestAnimal);
+
+  try {
+    const database = getDatabase();
+
+    practiceState.animals = await database.loadApprovedAnimals();
+
+    if (practiceState.animals.length === 0) {
+      setMessage("Keine Tiere in Supabase gefunden. Prüfe deine animals-Tabelle.", "warning");
+      renderPractice();
+      return;
+    }
+
+    startNewRound(false);
+    setMessage("Tierdatenbank geladen. Du bist dran.", "success");
+  } catch (error) {
+    setMessage(error.message, "error");
+  }
+
+  renderPractice();
+}
+
+function getDatabase() {
+  if (!window.AnimalchainDB) {
+    throw new Error("AnimalchainDB wurde nicht geladen. Prüfe practice.html: database.js muss vor practice.js stehen.");
+  }
+
+  return window.AnimalchainDB;
+}
+
+function startNewRound(showMessage) {
+  const startAnimal = pickRandomAnimal() || { name: "Turmfalke" };
+  const database = getDatabase();
+
+  practiceState.lastAnimal = startAnimal.name;
+  practiceState.requiredLetter = database.getLastLetter(startAnimal.name);
+  practiceState.moves = [];
+
+  renderPractice();
+
+  if (showMessage) {
+    setMessage(`Neue Runde. Starttier: ${practiceState.lastAnimal}`, "success");
+  }
+}
+
+async function handlePlayerMove(event) {
+  event.preventDefault();
+
+  const database = getDatabase();
+  const animalName = database.cleanAnimalName(practiceElements.animalInput.value);
+  const validation = validateAnimal(animalName);
+
+  if (!validation.ok) {
+    setMessage(validation.message, validation.type);
+    return;
+  }
+
+  addMove("Du", animalName);
+  practiceElements.animalInput.value = "";
+  renderPractice();
+
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  computerMove();
+}
+
+function computerMove() {
+  const options = getAvailableAnimalsForLetter(practiceState.requiredLetter);
+
+  if (options.length === 0) {
+    setMessage(`Der Computer findet kein Tier mit ${practiceState.requiredLetter.toUpperCase()}. Du gewinnst!`, "success");
+    return;
+  }
+
+  const animal = options[Math.floor(Math.random() * options.length)];
+
+  addMove("Computer", animal.name);
+  renderPractice();
+  setMessage(`Computer spielt: ${animal.name}. Jetzt brauchst du ${practiceState.requiredLetter.toUpperCase()}.`, "success");
+}
+
+function validateAnimal(animalName) {
+  const database = getDatabase();
+
+  if (!animalName) {
+    return {
+      ok: false,
+      type: "warning",
+      message: "Bitte gib ein Tier ein."
+    };
+  }
+
+  const normalizedName = database.normalizeAnimalName(animalName);
+
+  if (database.getFirstLetter(normalizedName) !== practiceState.requiredLetter) {
+    return {
+      ok: false,
+      type: "error",
+      message: `Dein Tier muss mit ${practiceState.requiredLetter.toUpperCase()} anfangen.`
+    };
+  }
+
+  if (!findAnimal(animalName)) {
+    return {
+      ok: false,
+      type: "error",
+      message: `"${animalName}" ist nicht in der Supabase-Tierdatenbank. Du kannst es unten vorschlagen.`
+    };
+  }
+
+  const wasAlreadyUsed = practiceState.moves.some((move) => {
+    return database.normalizeAnimalName(move.animal) === normalizedName;
+  });
+
+  if (wasAlreadyUsed) {
+    return {
+      ok: false,
+      type: "error",
+      message: `"${animalName}" wurde schon gespielt.`
+    };
+  }
+
+  return { ok: true };
+}
+
+function addMove(playerName, animalName) {
+  const database = getDatabase();
+  const normalizedName = database.normalizeAnimalName(animalName);
+
+  practiceState.moves.push({
+    playerName,
+    animal: database.toTitleCase(animalName)
+  });
+
+  practiceState.lastAnimal = database.toTitleCase(animalName);
+  practiceState.requiredLetter = database.getLastLetter(normalizedName);
+}
+
+function showHint() {
+  const options = getAvailableAnimalsForLetter(practiceState.requiredLetter);
+
+  if (options.length === 0) {
+    setMessage(`Kein Tipp für ${practiceState.requiredLetter.toUpperCase()} gefunden.`, "warning");
+    return;
+  }
+
+  const hint = options[Math.floor(Math.random() * options.length)];
+  setMessage(`Tipp: ${hint.name}`, "success");
+}
+
+async function handleSuggestAnimal(event) {
+  event.preventDefault();
+
+  const database = getDatabase();
+  const animalName = database.cleanAnimalName(practiceElements.suggestInput.value);
+
+  if (!animalName) {
+    setMessage("Bitte gib ein Tier ein.", "warning");
+    return;
+  }
+
+  try {
+    await database.suggestAnimal(animalName);
+    practiceElements.suggestInput.value = "";
+    setMessage(`"${database.toTitleCase(animalName)}" wurde in Supabase vorgeschlagen.`, "success");
+  } catch (error) {
+    setMessage(error.message, "error");
+  }
+}
+
+function findAnimal(animalName) {
+  const database = getDatabase();
+  const normalizedName = database.normalizeAnimalName(animalName);
+
+  return practiceState.animals.find((animal) => {
+    return animal.normalized_name === normalizedName;
+  });
+}
+
+function getAvailableAnimalsForLetter(letter) {
+  const database = getDatabase();
+  const usedAnimals = new Set(
+    practiceState.moves.map((move) => database.normalizeAnimalName(move.animal))
+  );
+
+  return practiceState.animals.filter((animal) => {
+    return animal.first_letter === letter && !usedAnimals.has(animal.normalized_name);
+  });
+}
+
+function pickRandomAnimal() {
+  if (practiceState.animals.length === 0) {
+    return null;
+  }
+
+  return practiceState.animals[Math.floor(Math.random() * practiceState.animals.length)];
+}
+
+function renderPractice() {
+  const database = getDatabase();
+
+  practiceElements.lastAnimal.textContent = practiceState.lastAnimal;
+  practiceElements.requiredLetter.textContent = practiceState.requiredLetter.toUpperCase();
+  practiceElements.moveCount.textContent = String(practiceState.moves.length);
+  practiceElements.animalCount.textContent = `${practiceState.animals.length} Tiere aus Supabase geladen`;
+
+  practiceElements.movesList.innerHTML = practiceState.moves.length
+    ? practiceState.moves.map((move) => `
+        <li>
+          <strong>${database.escapeHtml(move.animal)}</strong>
+          <span class="hint">von ${database.escapeHtml(move.playerName)}</span>
+        </li>
+      `).join("")
+    : `
+        <li>
+          <strong>${database.escapeHtml(practiceState.lastAnimal)}</strong>
+          <span class="hint">Starttier</span>
+        </li>
+      `;
+}
+
+function setMessage(text, type = "") {
+  practiceElements.gameMessage.textContent = text;
+  practiceElements.gameMessage.className = `message ${type}`.trim();
+}
