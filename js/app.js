@@ -1,7 +1,7 @@
 // js/app.js
 const ANIMALCHAIN_CONFIG = {
   supabaseUrl: "https://xbncxguszajafewaullp.supabase.co",
-  supabaseKey: "DEIN_PUBLIC_PUBLISHABLE_KEY_HIER"
+  supabaseKey: "sb_publishable_cft_HvPmZgUTVRKI8aFYTg_YMO4HnNF"
 };
 
 const supabaseClient = window.supabase
