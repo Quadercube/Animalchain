@@ -5,13 +5,15 @@ const ANIMALCHAIN_CONFIG = {
   supabaseKey: "sb_publishable_cft_HvPmZgUTVRKI8aFYTg_YMO4HnNF"
 };
 
-const LOCAL_ANIMALS_KEY = "animalchain_local_animals_v1";
+const LOCAL_ANIMALS_KEY = "animalchain_local_animals_v3_strict";
 
 const supabaseClient = window.supabase
   ? window.supabase.createClient(ANIMALCHAIN_CONFIG.supabaseUrl, ANIMALCHAIN_CONFIG.supabaseKey)
   : null;
 
 const page = document.body.dataset.page;
+
+console.log("Animalchain app.js STRICT v3 geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -94,6 +96,8 @@ async function findGameByCode(code) {
 }
 
 async function loadGameById(gameId) {
+  ensureSupabase();
+
   const { data, error } = await supabaseClient
     .from("games")
     .select("*")
@@ -108,6 +112,8 @@ async function loadGameById(gameId) {
 }
 
 async function loadGamePlayers(gameId) {
+  ensureSupabase();
+
   const { data, error } = await supabaseClient
     .from("game_players")
     .select("*")
@@ -122,6 +128,8 @@ async function loadGamePlayers(gameId) {
 }
 
 async function loadGameMoves(gameId) {
+  ensureSupabase();
+
   const { data, error } = await supabaseClient
     .from("moves")
     .select("*")
@@ -177,6 +185,8 @@ async function saveMove({
   requiredLetter,
   moveNumber
 }) {
+  ensureSupabase();
+
   const cleanAnimal = cleanAnimalName(animalName);
   const normalizedAnimal = normalizeAnimalName(cleanAnimal);
   const nextRequiredLetter = getLastLetter(normalizedAnimal);
@@ -205,6 +215,8 @@ async function saveMove({
 }
 
 async function updateGameAfterMove(gameId, animalName, nextRequiredLetter, nextTurnOrder) {
+  ensureSupabase();
+
   const { error } = await supabaseClient
     .from("games")
     .update({
@@ -222,6 +234,8 @@ async function updateGameAfterMove(gameId, animalName, nextRequiredLetter, nextT
 }
 
 async function eliminatePlayer(playerId) {
+  ensureSupabase();
+
   const { error } = await supabaseClient
     .from("game_players")
     .update({
@@ -236,6 +250,8 @@ async function eliminatePlayer(playerId) {
 }
 
 async function updateGameTurn(gameId, nextTurnOrder, status = "playing") {
+  ensureSupabase();
+
   const { error } = await supabaseClient
     .from("games")
     .update({
@@ -313,7 +329,7 @@ function initPracticePage() {
     event.preventDefault();
 
     const animalName = cleanAnimalName(el.animalInput.value);
-    const validation = validateAnimal(animalName);
+    const validation = validatePracticeAnimal(animalName);
 
     if (!validation.ok) {
       setMessage(el.message, validation.message, validation.type);
@@ -336,7 +352,11 @@ function initPracticePage() {
     );
 
     if (!options.length) {
-      setMessage(el.message, `Der Computer findet kein Tier mit ${state.requiredLetter.toUpperCase()}. Du gewinnst!`, "success");
+      setMessage(
+        el.message,
+        `Der Computer findet kein Tier mit ${state.requiredLetter.toUpperCase()}. Du gewinnst!`,
+        "success"
+      );
       return;
     }
 
@@ -347,7 +367,7 @@ function initPracticePage() {
     setMessage(el.message, `Computer spielt: ${animal.name}. Jetzt brauchst du ${state.requiredLetter.toUpperCase()}.`, "success");
   }
 
-  function validateAnimal(animalName) {
+  function validatePracticeAnimal(animalName) {
     const normalized = normalizeAnimalName(animalName);
 
     if (!animalName) {
@@ -370,7 +390,7 @@ function initPracticePage() {
       return {
         ok: false,
         type: "error",
-        message: `"${animalName}" ist nicht in deiner Tierliste. Füge es zuerst lokal hinzu.`
+        message: `"${animalName}" ist nicht in deiner Tierliste.`
       };
     }
 
@@ -728,7 +748,7 @@ function initOnlinePage() {
       return {
         ok: false,
         type: "error",
-        message: `"${animalName}" ist nicht in deiner Tierliste. Füge es zuerst lokal hinzu.`
+        message: `"${animalName}" ist nicht in deiner Tierliste.`
       };
     }
 
@@ -948,7 +968,7 @@ function initLocalPage() {
     }
 
     const animalName = cleanAnimalName(el.animalInput.value);
-    const validation = validateAnimal(animalName);
+    const validation = validateLocalAnimal(animalName);
 
     if (!validation.ok) {
       setMessage(el.message, validation.message, validation.type);
@@ -972,7 +992,7 @@ function initLocalPage() {
     render();
   }
 
-  function validateAnimal(animalName) {
+  function validateLocalAnimal(animalName) {
     const normalized = normalizeAnimalName(animalName);
 
     if (!animalName) {
@@ -995,7 +1015,7 @@ function initLocalPage() {
       return {
         ok: false,
         type: "error",
-        message: `"${animalName}" ist nicht in deiner Tierliste. Füge es zuerst lokal hinzu.`
+        message: `"${animalName}" ist nicht in deiner Tierliste.`
       };
     }
 
@@ -1098,7 +1118,7 @@ function mergeAnimals(databaseAnimals, localAnimals) {
   const animalsByName = new Map();
 
   [...databaseAnimals, ...localAnimals].forEach((animal) => {
-    if (animal?.normalized_name) {
+    if (animal && animal.normalized_name) {
       animalsByName.set(animal.normalized_name, animal);
     }
   });
@@ -1139,7 +1159,9 @@ function optionalQs(selector) {
 function findAnimal(animals, animalName) {
   const normalized = normalizeAnimalName(animalName);
 
-  return animals.find((animal) => animal.normalized_name === normalized) || null;
+  return animals.some((animal) => {
+    return animal && animal.normalized_name === normalized;
+  });
 }
 
 function availableAnimals(animals, firstLetter, usedNames = []) {
