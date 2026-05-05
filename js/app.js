@@ -1,8 +1,11 @@
 // js/app.js
+
 const ANIMALCHAIN_CONFIG = {
   supabaseUrl: "https://xbncxguszajafewaullp.supabase.co",
   supabaseKey: "sb_publishable_cft_HvPmZgUTVRKI8aFYTg_YMO4HnNF"
 };
+
+const LOCAL_ANIMALS_KEY = "animalchain_local_animals_v1";
 
 const supabaseClient = window.supabase
   ? window.supabase.createClient(ANIMALCHAIN_CONFIG.supabaseUrl, ANIMALCHAIN_CONFIG.supabaseKey)
@@ -27,7 +30,7 @@ async function loadApprovedAnimals() {
     throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
   }
 
-  return data || [];
+  return mergeAnimals(data || [], loadLocalAnimals());
 }
 
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
@@ -363,20 +366,18 @@ function initPracticePage() {
       };
     }
 
-    if (!findAnimal(state.animals, animalName)) {
-      return {
-        ok: false,
-        type: "error",
-        message: `"${animalName}" ist nicht in der Supabase-Tierdatenbank.`
-      };
-    }
-
     if (state.moves.some((move) => normalizeAnimalName(move.animal) === normalized)) {
       return {
         ok: false,
         type: "error",
         message: `"${animalName}" wurde schon gespielt.`
       };
+    }
+
+    if (!findAnimal(state.animals, animalName)) {
+      const localAnimal = addLocalAnimal(animalName);
+      state.animals = mergeAnimals(state.animals, [localAnimal]);
+      setMessage(el.message, `"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`, "success");
     }
 
     return { ok: true };
@@ -575,9 +576,9 @@ function initOnlinePage() {
 
   async function checkTimerExpiration() {
     const currentPlayer = getCurrentOnlinePlayer();
-    const active = state.players.filter((player) => !player.is_eliminated);
+    const activePlayers = state.players.filter((player) => !player.is_eliminated);
 
-    if (!currentPlayer || active.length <= 1 || !state.game.turn_started_at || getRemainingSeconds() > 0) {
+    if (!currentPlayer || activePlayers.length <= 1 || !state.game.turn_started_at || getRemainingSeconds() > 0) {
       return;
     }
 
@@ -680,20 +681,18 @@ function initOnlinePage() {
       };
     }
 
-    if (!findAnimal(state.animals, animalName)) {
-      return {
-        ok: false,
-        type: "error",
-        message: `"${animalName}" ist nicht in der Tierdatenbank.`
-      };
-    }
-
     if (state.moves.some((move) => move.normalized_animal_name === normalized)) {
       return {
         ok: false,
         type: "error",
         message: `"${animalName}" wurde schon gespielt.`
       };
+    }
+
+    if (!findAnimal(state.animals, animalName)) {
+      const localAnimal = addLocalAnimal(animalName);
+      state.animals = mergeAnimals(state.animals, [localAnimal]);
+      setMessage(el.message, `"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`, "success");
     }
 
     return { ok: true };
@@ -947,20 +946,18 @@ function initLocalPage() {
       };
     }
 
-    if (!findAnimal(state.animals, animalName)) {
-      return {
-        ok: false,
-        type: "error",
-        message: `"${animalName}" ist nicht in der Tierdatenbank.`
-      };
-    }
-
     if (state.moves.some((move) => normalizeAnimalName(move.animal) === normalized)) {
       return {
         ok: false,
         type: "error",
         message: `"${animalName}" wurde schon gespielt.`
       };
+    }
+
+    if (!findAnimal(state.animals, animalName)) {
+      const localAnimal = addLocalAnimal(animalName);
+      state.animals = mergeAnimals(state.animals, [localAnimal]);
+      setMessage(el.message, `"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`, "success");
     }
 
     return { ok: true };
@@ -1002,6 +999,64 @@ function initLocalPage() {
           </li>
         `;
   }
+}
+
+function loadLocalAnimals() {
+  try {
+    const animals = JSON.parse(localStorage.getItem(LOCAL_ANIMALS_KEY));
+    return Array.isArray(animals) ? animals : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalAnimals(animals) {
+  localStorage.setItem(LOCAL_ANIMALS_KEY, JSON.stringify(animals));
+}
+
+function createLocalAnimal(name) {
+  const cleanName = cleanAnimalName(name);
+  const normalizedName = normalizeAnimalName(cleanName);
+
+  return {
+    id: `local-${normalizedName}`,
+    name: toTitleCase(cleanName),
+    normalized_name: normalizedName,
+    first_letter: getFirstLetter(normalizedName),
+    last_letter: getLastLetter(normalizedName),
+    status: "approved",
+    local: true
+  };
+}
+
+function addLocalAnimal(name) {
+  const animal = createLocalAnimal(name);
+
+  if (!animal.normalized_name || !animal.first_letter || !animal.last_letter) {
+    throw new Error("Dieses Tier kann nicht lokal gespeichert werden.");
+  }
+
+  const localAnimals = loadLocalAnimals();
+  const exists = localAnimals.some((item) => item.normalized_name === animal.normalized_name);
+
+  if (!exists) {
+    localAnimals.push(animal);
+    saveLocalAnimals(localAnimals);
+  }
+
+  return animal;
+}
+
+function mergeAnimals(databaseAnimals, localAnimals) {
+  const animalsByName = new Map();
+
+  [...databaseAnimals, ...localAnimals].forEach((animal) => {
+    if (animal?.normalized_name) {
+      animalsByName.set(animal.normalized_name, animal);
+    }
+  });
+
+  return [...animalsByName.values()].sort((a, b) => a.name.localeCompare(b.name, "de"));
 }
 
 function ensureSupabase() {
