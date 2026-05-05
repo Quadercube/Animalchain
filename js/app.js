@@ -366,18 +366,20 @@ function initPracticePage() {
       };
     }
 
+    if (!findAnimal(state.animals, animalName)) {
+      return {
+        ok: false,
+        type: "error",
+        message: `"${animalName}" ist nicht in deiner Tierliste. Füge es zuerst lokal hinzu.`
+      };
+    }
+
     if (state.moves.some((move) => normalizeAnimalName(move.animal) === normalized)) {
       return {
         ok: false,
         type: "error",
         message: `"${animalName}" wurde schon gespielt.`
       };
-    }
-
-    if (!findAnimal(state.animals, animalName)) {
-      const localAnimal = addLocalAnimal(animalName);
-      state.animals = mergeAnimals(state.animals, [localAnimal]);
-      setMessage(el.message, `"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`, "success");
     }
 
     return { ok: true };
@@ -465,6 +467,10 @@ function initOnlinePage() {
     movesList: "#onlineMovesList"
   });
 
+  const localAnimalForm = optionalQs("#onlineLocalAnimalForm");
+  const localAnimalInput = optionalQs("#onlineLocalAnimalInput");
+  const localAnimalMessage = optionalQs("#onlineLocalAnimalMessage");
+
   el.nameForm.addEventListener("submit", handleName);
   el.createLobbyButton.addEventListener("click", handleCreateLobby);
   el.copyCodeButton.addEventListener("click", copyLobbyCode);
@@ -472,6 +478,10 @@ function initOnlinePage() {
   el.moveForm.addEventListener("submit", handleMove);
   el.refreshButton.addEventListener("click", refreshLobby);
   el.newRoundButton.addEventListener("click", newRound);
+
+  if (localAnimalForm && localAnimalInput && localAnimalMessage) {
+    localAnimalForm.addEventListener("submit", handleAddLocalAnimal);
+  }
 
   start();
 
@@ -491,6 +501,39 @@ function initOnlinePage() {
 
     state.guestName = cleanPlayerName(el.guestName.value) || "Gast";
     setMessage(el.message, `Name gesetzt: ${state.guestName}`, "success");
+  }
+
+  function handleAddLocalAnimal(event) {
+    event.preventDefault();
+
+    try {
+      const animalName = cleanAnimalName(localAnimalInput.value);
+      const normalized = normalizeAnimalName(animalName);
+
+      if (!animalName) {
+        localAnimalMessage.textContent = "Bitte gib ein Tier ein.";
+        return;
+      }
+
+      if (normalized.length < 3) {
+        localAnimalMessage.textContent = "Der Tiername ist zu kurz.";
+        return;
+      }
+
+      if (!/^[a-zäöüßA-ZÄÖÜ\s-]+$/.test(animalName)) {
+        localAnimalMessage.textContent = "Bitte nur Buchstaben, Leerzeichen oder Bindestrich verwenden.";
+        return;
+      }
+
+      const localAnimal = addLocalAnimal(animalName);
+      state.animals = mergeAnimals(state.animals, [localAnimal]);
+
+      localAnimalInput.value = "";
+      localAnimalMessage.textContent = `"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`;
+      setMessage(el.message, `"${toTitleCase(animalName)}" ist jetzt lokal spielbar.`, "success");
+    } catch (error) {
+      localAnimalMessage.textContent = error.message;
+    }
   }
 
   async function handleCreateLobby() {
@@ -681,18 +724,20 @@ function initOnlinePage() {
       };
     }
 
+    if (!findAnimal(state.animals, animalName)) {
+      return {
+        ok: false,
+        type: "error",
+        message: `"${animalName}" ist nicht in deiner Tierliste. Füge es zuerst lokal hinzu.`
+      };
+    }
+
     if (state.moves.some((move) => move.normalized_animal_name === normalized)) {
       return {
         ok: false,
         type: "error",
         message: `"${animalName}" wurde schon gespielt.`
       };
-    }
-
-    if (!findAnimal(state.animals, animalName)) {
-      const localAnimal = addLocalAnimal(animalName);
-      state.animals = mergeAnimals(state.animals, [localAnimal]);
-      setMessage(el.message, `"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`, "success");
     }
 
     return { ok: true };
@@ -946,18 +991,20 @@ function initLocalPage() {
       };
     }
 
+    if (!findAnimal(state.animals, animalName)) {
+      return {
+        ok: false,
+        type: "error",
+        message: `"${animalName}" ist nicht in deiner Tierliste. Füge es zuerst lokal hinzu.`
+      };
+    }
+
     if (state.moves.some((move) => normalizeAnimalName(move.animal) === normalized)) {
       return {
         ok: false,
         type: "error",
         message: `"${animalName}" wurde schon gespielt.`
       };
-    }
-
-    if (!findAnimal(state.animals, animalName)) {
-      const localAnimal = addLocalAnimal(animalName);
-      state.animals = mergeAnimals(state.animals, [localAnimal]);
-      setMessage(el.message, `"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`, "success");
     }
 
     return { ok: true };
@@ -1083,6 +1130,10 @@ function qs(selector) {
   }
 
   return element;
+}
+
+function optionalQs(selector) {
+  return document.querySelector(selector);
 }
 
 function findAnimal(animals, animalName) {
