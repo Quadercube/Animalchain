@@ -2,7 +2,7 @@
 
 const ANIMALCHAIN_CONFIG = {
   supabaseUrl: "https://xbncxguszajafewaullp.supabase.co",
-  supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhibmN4Z3VzemFqYWZld2F1bGxwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0OTMyMjIsImV4cCI6MjA5MzA2OTIyMn0.SmsP4udyYq9SSbVj-70_CyqlkPjyS2lzUM5jhFtRSPQ"
+  supabaseKey: "DEIN_SUPABASE_ANON_KEY_HIER_EINFÜGEN"
 };
 
 const LOCAL_ANIMALS_KEY = "animalchain_local_animals_v3_strict";
@@ -13,7 +13,7 @@ const supabaseClient = window.supabase
 
 const page = document.body.dataset.page;
 
-console.log("Animalchain app.js STRICT v3 geladen");
+console.log("Animalchain app.js STRICT v4 geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -22,24 +22,39 @@ if (page === "local") initLocalPage();
 async function loadApprovedAnimals() {
   ensureSupabase();
 
-const { data, error } = await supabaseClient
-    .from("animals")
-    .select("id, name, normalized_name, first_letter, last_letter, status")
-    .eq("status", "approved")
-    .order("name", { ascending: true })
-    .range(0, 9999);
+  const pageSize = 1000;
+  let from = 0;
+  let allAnimals = [];
 
-if (error) {
-    throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
+  while (true) {
+    const to = from + pageSize - 1;
+
+    const { data, error } = await supabaseClient
+      .from("animals")
+      .select("id, name, normalized_name, first_letter, last_letter, status")
+      .eq("status", "approved")
+      .order("name", { ascending: true })
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
+    }
+
+    const animals = data || [];
+    allAnimals = allAnimals.concat(animals);
+
+    if (animals.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
   }
 
-  console.log("Aus Supabase geladen:", data?.length, "Tiere");
-  console.log("Schlange dabei?", data?.some(t => t.name === "Schlange"));
-  console.log("Beispiel:", data?.[0]);
+  console.log(`Animalchain: ${allAnimals.length} Tiere aus Supabase geladen`);
+  console.log("Schwan dabei?", allAnimals.some((animal) => normalizeAnimalName(animal.name) === "schwan"));
+  console.log("Schlange dabei?", allAnimals.some((animal) => normalizeAnimalName(animal.name) === "schlange"));
 
-  return mergeAnimals(data || [], loadLocalAnimals());
-
-  return mergeAnimals(data || [], loadLocalAnimals());
+  return mergeAnimals(allAnimals, loadLocalAnimals());
 }
 
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
@@ -1167,7 +1182,7 @@ function findAnimal(animals, animalName) {
   const normalized = normalizeAnimalName(animalName);
 
   return animals.some((animal) => {
-    return animal && animal.normalized_name === normalized;
+    return animal && normalizeAnimalName(animal.name || animal.normalized_name) === normalized;
   });
 }
 
@@ -1176,7 +1191,10 @@ function availableAnimals(animals, firstLetter, usedNames = []) {
   const letter = String(firstLetter || "").toLowerCase();
 
   return animals.filter((animal) => {
-    return animal.first_letter === letter && !used.has(animal.normalized_name);
+    const normalizedName = normalizeAnimalName(animal.name || animal.normalized_name);
+    const firstAnimalLetter = animal.first_letter || getFirstLetter(normalizedName);
+
+    return firstAnimalLetter === letter && !used.has(normalizedName);
   });
 }
 
@@ -1212,8 +1230,6 @@ function cleanAnimalName(value) {
     .trim()
     .replace(/\s+/g, " ");
 }
-
-
 
 function normalizeAnimalName(value) {
   return String(value || "")
