@@ -22,11 +22,12 @@ if (page === "local") initLocalPage();
 async function loadApprovedAnimals() {
   ensureSupabase();
 
-  const { data, error } = await supabaseClient
+const { data, error } = await supabaseClient
     .from("animals")
     .select("id, name, normalized_name, first_letter, last_letter, status")
     .eq("status", "approved")
-    .order("name", { ascending: true });
+    .order("name", { ascending: true })
+    .range(0, 9999);
 
 if (error) {
     throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
