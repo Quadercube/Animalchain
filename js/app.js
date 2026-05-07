@@ -1206,13 +1206,18 @@ function cleanAnimalName(value) {
     .replace(/\s+/g, " ");
 }
 
+
+
 function normalizeAnimalName(value) {
   return String(value || "")
     .trim()
     .toLowerCase()
+    .replace(/ä/g, "a")
+    .replace(/ö/g, "o")
+    .replace(/ü/g, "u")
+    .replace(/ß/g, "ss")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/ß/g, "ss")
     .replace(/[^a-z\s-]/g, "")
     .replace(/\s+/g, " ");
 }
