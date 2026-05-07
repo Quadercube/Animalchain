@@ -28,9 +28,15 @@ async function loadApprovedAnimals() {
     .eq("status", "approved")
     .order("name", { ascending: true });
 
-  if (error) {
+if (error) {
     throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
   }
+
+  console.log("Aus Supabase geladen:", data?.length, "Tiere");
+  console.log("Schlange dabei?", data?.some(t => t.name === "Schlange"));
+  console.log("Beispiel:", data?.[0]);
+
+  return mergeAnimals(data || [], loadLocalAnimals());
 
   return mergeAnimals(data || [], loadLocalAnimals());
 }
