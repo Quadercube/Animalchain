@@ -22,22 +22,35 @@ if (page === "local") initLocalPage();
 async function loadApprovedAnimals() {
   ensureSupabase();
 
-  const { data, error } = await supabaseClient
-    .from("animals")
-    .select("id, name, normalized_name, first_letter, last_letter, status")
-    .eq("status", "approved")
-    .order("name", { ascending: true })
-    .range(0, 9999);
+  let allAnimals = [];
+  let from = 0;
+  const pageSize = 1000;
 
-  if (error) {
-    throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
+  while (true) {
+    const { data, error } = await supabaseClient
+      .from("animals")
+      .select("id, name, normalized_name, first_letter, last_letter, status")
+      .eq("status", "approved")
+      .order("name", { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
+    }
+
+    if (!data || data.length === 0) break;
+
+    allAnimals = allAnimals.concat(data);
+    console.log(`Geladen: ${allAnimals.length} Tiere bisher...`);
+
+    if (data.length < pageSize) break;
+    from += pageSize;
   }
 
-  console.log("Aus Supabase geladen:", data?.length, "Tiere");
-  console.log("Schlange dabei?", data?.some(t => t.name === "Schlange"));
-  console.log("Beispiel:", data?.[0]);
+  console.log("Insgesamt aus Supabase geladen:", allAnimals.length, "Tiere");
+  console.log("Schlange dabei?", allAnimals.some(t => t.name === "Schlange"));
 
-  return mergeAnimals(data || [], loadLocalAnimals());
+  return mergeAnimals(allAnimals, loadLocalAnimals());
 }
 
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
