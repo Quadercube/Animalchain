@@ -2,7 +2,7 @@
 
 const ANIMALCHAIN_CONFIG = {
   supabaseUrl: "https://xbncxguszajafewaullp.supabase.co",
-  supabaseKey: "sb_publishable_cft_HvPmZgUTVRKI8aFYTg_YMO4HnNF"
+  supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhibmN4Z3VzemFqYWZld2F1bGxwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0OTMyMjIsImV4cCI6MjA5MzA2OTIyMn0.SmsP4udyYq9SSbVj-70_CyqlkPjyS2lzUM5jhFtRSPQ"
 };
 
 const LOCAL_ANIMALS_KEY = "animalchain_local_animals_v3_strict";
