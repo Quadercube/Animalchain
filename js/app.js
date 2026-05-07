@@ -2,7 +2,7 @@
 
 const ANIMALCHAIN_CONFIG = {
   supabaseUrl: "https://xbncxguszajafewaullp.supabase.co",
-  supabaseKey: "sb_publishable_cft_HvPmZgUTVRKI8aFYTg_YMO4HnNF"
+  supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhibmN4Z3VzemFqYWZld2F1bGxwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0OTMyMjIsImV4cCI6MjA5MzA2OTIyMn0.SmsP4udyYq9SSbVj-70_CyqlkPjyS2lzUM5jhFtRSPQ"
 };
 
 const LOCAL_ANIMALS_KEY = "animalchain_local_animals_v3_strict";
@@ -22,39 +22,22 @@ if (page === "local") initLocalPage();
 async function loadApprovedAnimals() {
   ensureSupabase();
 
-  const pageSize = 1000;
-  let from = 0;
-  let allAnimals = [];
+  const { data, error } = await supabaseClient
+    .from("animals")
+    .select("id, name, normalized_name, first_letter, last_letter, status")
+    .eq("status", "approved")
+    .order("name", { ascending: true })
+    .range(0, 9999);
 
-  while (true) {
-    const to = from + pageSize - 1;
-
-    const { data, error } = await supabaseClient
-      .from("animals")
-      .select("id, name, normalized_name, first_letter, last_letter, status")
-      .eq("status", "approved")
-      .order("name", { ascending: true })
-      .range(from, to);
-
-    if (error) {
-      throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
-    }
-
-    const animals = data || [];
-    allAnimals = allAnimals.concat(animals);
-
-    if (animals.length < pageSize) {
-      break;
-    }
-
-    from += pageSize;
+  if (error) {
+    throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
   }
 
-  console.log(`Animalchain: ${allAnimals.length} Tiere aus Supabase geladen`);
-  console.log("Schwan dabei?", allAnimals.some((animal) => normalizeAnimalName(animal.name) === "schwan"));
-  console.log("Schlange dabei?", allAnimals.some((animal) => normalizeAnimalName(animal.name) === "schlange"));
+  console.log("Aus Supabase geladen:", data?.length, "Tiere");
+  console.log("Schlange dabei?", data?.some(t => t.name === "Schlange"));
+  console.log("Beispiel:", data?.[0]);
 
-  return mergeAnimals(allAnimals, loadLocalAnimals());
+  return mergeAnimals(data || [], loadLocalAnimals());
 }
 
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
@@ -325,7 +308,7 @@ function initPracticePage() {
       }
 
       startNewRound(false);
-      setMessage(el.message, "Tierdatenbank geladen. Du bist dran.", "success");
+      setMessage(el.message, `${state.animals.length} Tiere geladen. Du bist dran.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
@@ -530,7 +513,7 @@ function initOnlinePage() {
   async function start() {
     try {
       state.animals = await loadApprovedAnimals();
-      setMessage(el.message, "Bereit. Erstelle eine Lobby oder tritt einer bei.", "success");
+      setMessage(el.message, `${state.animals.length} Tiere geladen. Erstelle eine Lobby oder tritt einer bei.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
@@ -936,7 +919,7 @@ function initLocalPage() {
   async function start() {
     try {
       state.animals = await loadApprovedAnimals();
-      setMessage(el.message, "Tierdatenbank geladen. Füge Spieler hinzu.", "success");
+      setMessage(el.message, `${state.animals.length} Tiere geladen. Füge Spieler hinzu.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
@@ -1140,9 +1123,18 @@ function mergeAnimals(databaseAnimals, localAnimals) {
   const animalsByName = new Map();
 
   [...databaseAnimals, ...localAnimals].forEach((animal) => {
-    if (animal && animal.normalized_name) {
-      animalsByName.set(animal.normalized_name, animal);
-    }
+    if (!animal) return;
+
+    // Falls normalized_name fehlt, neu berechnen aus dem Namen
+    const normalized = animal.normalized_name || normalizeAnimalName(animal.name);
+    if (!normalized) return;
+
+    animalsByName.set(normalized, {
+      ...animal,
+      normalized_name: normalized,
+      first_letter: animal.first_letter || getFirstLetter(animal.name),
+      last_letter: animal.last_letter || getLastLetter(animal.name)
+    });
   });
 
   return [...animalsByName.values()].sort((a, b) => a.name.localeCompare(b.name, "de"));
@@ -1182,7 +1174,9 @@ function findAnimal(animals, animalName) {
   const normalized = normalizeAnimalName(animalName);
 
   return animals.some((animal) => {
-    return animal && normalizeAnimalName(animal.name || animal.normalized_name) === normalized;
+    if (!animal) return false;
+    const animalNormalized = animal.normalized_name || normalizeAnimalName(animal.name);
+    return animalNormalized === normalized;
   });
 }
 
@@ -1191,10 +1185,9 @@ function availableAnimals(animals, firstLetter, usedNames = []) {
   const letter = String(firstLetter || "").toLowerCase();
 
   return animals.filter((animal) => {
-    const normalizedName = normalizeAnimalName(animal.name || animal.normalized_name);
-    const firstAnimalLetter = animal.first_letter || getFirstLetter(normalizedName);
-
-    return firstAnimalLetter === letter && !used.has(normalizedName);
+    const animalFirst = animal.first_letter || getFirstLetter(animal.name);
+    const animalNormalized = animal.normalized_name || normalizeAnimalName(animal.name);
+    return animalFirst === letter && !used.has(animalNormalized);
   });
 }
 
