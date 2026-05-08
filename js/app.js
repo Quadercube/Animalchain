@@ -468,7 +468,6 @@ function initPracticePage() {
         `;
   }
 }
-
 function initOnlinePage() {
   const state = {
     animals: [],
@@ -505,6 +504,7 @@ function initOnlinePage() {
     movesList: "#onlineMovesList"
   });
 
+  const startGameButton = optionalQs("#onlineStartGameButton");
   const localAnimalForm = optionalQs("#onlineLocalAnimalForm");
   const localAnimalInput = optionalQs("#onlineLocalAnimalInput");
   const localAnimalMessage = optionalQs("#onlineLocalAnimalMessage");
@@ -516,6 +516,10 @@ function initOnlinePage() {
   el.moveForm.addEventListener("submit", handleMove);
   el.refreshButton.addEventListener("click", refreshLobby);
   el.newRoundButton.addEventListener("click", newRound);
+
+  if (startGameButton) {
+    startGameButton.addEventListener("click", handleStartGame);
+  }
 
   if (localAnimalForm && localAnimalInput && localAnimalMessage) {
     localAnimalForm.addEventListener("submit", handleAddLocalAnimal);
@@ -578,12 +582,22 @@ function initOnlinePage() {
     try {
       const code = generateLobbyCode();
 
+      // Lobby wird im "waiting" Status erstellt - KEIN Timer-Start
       const { game, player } = await createGame({
         code,
         guestName: state.guestName,
         timerEnabled: el.timerEnabled.checked,
         turnSeconds: Number(el.turnSeconds.value || 60)
       });
+
+      // Setze turn_started_at auf null - Timer läuft erst beim Spielstart
+      await supabaseClient
+        .from("games")
+        .update({ turn_started_at: null, status: "waiting" })
+        .eq("id", game.id);
+
+      game.turn_started_at = null;
+      game.status = "waiting";
 
       state.game = game;
       state.localPlayer = player;
@@ -594,7 +608,7 @@ function initOnlinePage() {
       startAutoRefresh();
       await refreshLobby();
 
-      setMessage(el.message, `Lobby ${code} erstellt. Teile den Code mit deinen Freunden.`, "success");
+      setMessage(el.message, `Lobby ${code} erstellt. Warte auf Spieler und drücke "Spiel starten".`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
@@ -616,7 +630,57 @@ function initOnlinePage() {
       startAutoRefresh();
       await refreshLobby();
 
-      setMessage(el.message, `Du bist Lobby ${game.code} beigetreten.`, "success");
+      setMessage(el.message, `Du bist Lobby ${game.code} beigetreten. Warte bis der Host startet.`, "success");
+    } catch (error) {
+      setMessage(el.message, error.message, "error");
+    }
+  }
+
+  async function handleStartGame() {
+    if (!state.game?.id) {
+      setMessage(el.message, "Du bist in keiner Lobby.", "warning");
+      return;
+    }
+
+    if (state.players.length < 2) {
+      setMessage(el.message, "Du brauchst mindestens 2 Spieler zum Starten.", "warning");
+      return;
+    }
+
+    try {
+      // Reaktiviere alle ausgeschiedenen Spieler für eine neue Runde
+      await supabaseClient
+        .from("game_players")
+        .update({ is_eliminated: false, eliminated_at: null })
+        .eq("game_id", state.game.id);
+
+      // Lösche alte Moves für eine frische Runde
+      await supabaseClient
+        .from("moves")
+        .delete()
+        .eq("game_id", state.game.id);
+
+      // Wähle zufälliges Starttier
+      const animal = randomItem(state.animals) || { name: "Turmfalke" };
+
+      // Starte das Spiel - JETZT erst läuft der Timer
+      const { error } = await supabaseClient
+        .from("games")
+        .update({
+          status: "playing",
+          last_animal: animal.name,
+          current_required_letter: getLastLetter(animal.name),
+          current_turn_order: 1,
+          turn_started_at: new Date().toISOString()
+        })
+        .eq("id", state.game.id);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      await refreshLobby();
+      setMessage(el.message, `Spiel gestartet! Starttier: ${animal.name}`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
@@ -645,7 +709,8 @@ function initOnlinePage() {
       state.players = await loadGamePlayers(state.game.id);
       state.moves = await loadGameMoves(state.game.id);
 
-      if (state.game.timer_enabled) {
+      // Timer nur prüfen wenn das Spiel auch läuft
+      if (state.game.timer_enabled && state.game.status === "playing") {
         await checkTimerExpiration();
       }
 
@@ -689,6 +754,11 @@ function initOnlinePage() {
 
     if (!state.game || !state.localPlayer) {
       setMessage(el.message, "Du bist in keiner Lobby.", "warning");
+      return;
+    }
+
+    if (state.game.status !== "playing") {
+      setMessage(el.message, "Das Spiel hat noch nicht gestartet.", "warning");
       return;
     }
 
@@ -783,10 +853,29 @@ function initOnlinePage() {
 
   async function newRound() {
     if (!state.game?.id) {
+      setMessage(el.message, "Du bist in keiner Lobby.", "warning");
+      return;
+    }
+
+    if (state.players.length < 2) {
+      setMessage(el.message, "Du brauchst mindestens 2 Spieler.", "warning");
       return;
     }
 
     try {
+      // Reaktiviere alle ausgeschiedenen Spieler
+      await supabaseClient
+        .from("game_players")
+        .update({ is_eliminated: false, eliminated_at: null })
+        .eq("game_id", state.game.id);
+
+      // Lösche alle alten Moves
+      await supabaseClient
+        .from("moves")
+        .delete()
+        .eq("game_id", state.game.id);
+
+      // Neues Starttier
       const animal = randomItem(state.animals) || { name: "Turmfalke" };
 
       const { error } = await supabaseClient
@@ -794,7 +883,7 @@ function initOnlinePage() {
         .update({
           last_animal: animal.name,
           current_required_letter: getLastLetter(animal.name),
-          current_turn_order: firstActiveTurnOrder(state.players) || 1,
+          current_turn_order: 1,
           turn_started_at: new Date().toISOString(),
           status: "playing"
         })
@@ -829,7 +918,7 @@ function initOnlinePage() {
   }
 
   function getRemainingSeconds() {
-    if (!state.game?.timer_enabled || !state.game?.turn_started_at) {
+    if (!state.game?.timer_enabled || !state.game?.turn_started_at || state.game?.status !== "playing") {
       return null;
     }
 
@@ -852,10 +941,35 @@ function initOnlinePage() {
     el.requiredLetter.textContent = state.game?.current_required_letter
       ? state.game.current_required_letter.toUpperCase()
       : "---";
-    el.timerDisplay.textContent = state.game?.timer_enabled ? formatTimer(getRemainingSeconds()) : "Aus";
-    el.turnBadge.textContent = currentPlayer
-      ? `${currentPlayer.guest_name} ist dran${currentPlayer.is_eliminated ? " · ausgeschieden" : ""}`
-      : "Keine aktive Lobby";
+    el.timerDisplay.textContent = state.game?.timer_enabled && state.game?.status === "playing"
+      ? formatTimer(getRemainingSeconds())
+      : (state.game?.status === "waiting" ? "Wartend" : "Aus");
+
+    // Status-Anzeige im turnBadge
+    if (!state.game) {
+      el.turnBadge.textContent = "Keine aktive Lobby";
+    } else if (state.game.status === "waiting") {
+      el.turnBadge.textContent = `Lobby wartet · ${state.players.length} Spieler · Host kann starten`;
+    } else if (state.game.status === "finished") {
+      el.turnBadge.textContent = "Spiel beendet";
+    } else if (currentPlayer) {
+      el.turnBadge.textContent = `${currentPlayer.guest_name} ist dran${currentPlayer.is_eliminated ? " · ausgeschieden" : ""}`;
+    } else {
+      el.turnBadge.textContent = "Warte...";
+    }
+
+    // Zeige/Verstecke Start-Button basierend auf Status
+    if (startGameButton) {
+      if (state.game?.status === "waiting" && state.players.length >= 2) {
+        startGameButton.hidden = false;
+        startGameButton.textContent = "Spiel starten";
+      } else if (state.game?.status === "finished") {
+        startGameButton.hidden = false;
+        startGameButton.textContent = "Erneut spielen";
+      } else {
+        startGameButton.hidden = true;
+      }
+    }
 
     el.playersList.innerHTML = state.players.length
       ? state.players.map((player) => `
@@ -869,9 +983,11 @@ function initOnlinePage() {
             ${
               player.is_eliminated
                 ? `<span class="pill danger">Raus</span>`
-                : player.turn_order === state.game?.current_turn_order
-                  ? `<span class="pill success">Dran</span>`
-                  : `<span class="pill">Aktiv</span>`
+                : state.game?.status === "waiting"
+                  ? `<span class="pill">Bereit</span>`
+                  : player.turn_order === state.game?.current_turn_order
+                    ? `<span class="pill success">Dran</span>`
+                    : `<span class="pill">Aktiv</span>`
             }
           </article>
         `).join("")
@@ -891,11 +1007,18 @@ function initOnlinePage() {
           </li>
         `;
 
-    if (activePlayers.length === 1 && state.players.length > 1) {
-      setMessage(el.message, `${activePlayers[0].guest_name} gewinnt!`, "success");
+    if (state.game?.status === "playing" && activePlayers.length === 1 && state.players.length > 1) {
+      setMessage(el.message, `${activePlayers[0].guest_name} gewinnt! Drücke "Neue Runde" um nochmal zu spielen.`, "success");
+
+      // Spiel als finished markieren
+      supabaseClient
+        .from("games")
+        .update({ status: "finished" })
+        .eq("id", state.game.id);
     }
   }
 }
+
 
 function initLocalPage() {
   const state = {
