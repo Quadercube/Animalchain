@@ -8,12 +8,14 @@ const ANIMALCHAIN_CONFIG = {
 const LOCAL_ANIMALS_KEY = "animalchain_local_animals_v3_strict";
 
 const supabaseClient = window.supabase
-  ? window.supabase.createClient(ANIMALCHAIN_CONFIG.supabaseUrl, ANIMALCHAIN_CONFIG.supabaseKey)
+  ? window.supabase.createClient(ANIMALCHAIN_CONFIG.supabaseUrl, ANIMALCHAIN_CONFIG.supabaseKey, {
+      realtime: { params: { eventsPerSecond: 10 } }
+    })
   : null;
 
 const page = document.body.dataset.page;
 
-console.log("Animalchain app.js v6 geladen");
+console.log("Animalchain app.js v7 (Realtime) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -48,7 +50,6 @@ async function loadApprovedAnimals() {
   return mergeAnimals(allAnimals, loadLocalAnimals());
 }
 
-// WICHTIG: createGame setzt status "waiting" und turn_started_at = null
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
   ensureSupabase();
 
@@ -68,9 +69,7 @@ async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
     .select()
     .single();
 
-  if (gameError) {
-    throw new Error(`Lobby konnte nicht erstellt werden: ${gameError.message}`);
-  }
+  if (gameError) throw new Error(`Lobby konnte nicht erstellt werden: ${gameError.message}`);
 
   const { data: player, error: playerError } = await supabaseClient
     .from("game_players")
@@ -84,10 +83,7 @@ async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
     .select()
     .single();
 
-  if (playerError) {
-    throw new Error(`Spieler konnte nicht erstellt werden: ${playerError.message}`);
-  }
-
+  if (playerError) throw new Error(`Spieler konnte nicht erstellt werden: ${playerError.message}`);
   return { game, player };
 }
 
@@ -98,7 +94,6 @@ async function findGameByCode(code) {
     .select("*")
     .eq("code", normalizeLobbyCode(code))
     .single();
-
   if (error) throw new Error("Lobby wurde nicht gefunden.");
   return data;
 }
@@ -110,7 +105,6 @@ async function loadGameById(gameId) {
     .select("*")
     .eq("id", gameId)
     .single();
-
   if (error) throw new Error(`Lobby konnte nicht geladen werden: ${error.message}`);
   return data;
 }
@@ -122,7 +116,6 @@ async function loadGamePlayers(gameId) {
     .select("*")
     .eq("game_id", gameId)
     .order("turn_order", { ascending: true });
-
   if (error) throw new Error(`Spieler konnten nicht geladen werden: ${error.message}`);
   return data || [];
 }
@@ -134,18 +127,13 @@ async function loadGameMoves(gameId) {
     .select("*")
     .eq("game_id", gameId)
     .order("move_number", { ascending: true });
-
   if (error) throw new Error(`Spielzüge konnten nicht geladen werden: ${error.message}`);
   return data || [];
 }
 
-// WICHTIG: joinGame startet KEIN Spiel mehr - Status bleibt "waiting"!
 async function joinGame(game, guestName) {
   const players = await loadGamePlayers(game.id);
-
-  if (players.length >= game.max_players) {
-    throw new Error("Diese Lobby ist voll.");
-  }
+  if (players.length >= game.max_players) throw new Error("Diese Lobby ist voll.");
 
   const { data: player, error } = await supabaseClient
     .from("game_players")
@@ -201,7 +189,6 @@ async function updateGameAfterMove(gameId, animalName, nextRequiredLetter, nextT
       status: "playing"
     })
     .eq("id", gameId);
-
   if (error) throw new Error(`Lobby konnte nicht aktualisiert werden: ${error.message}`);
 }
 
@@ -211,7 +198,6 @@ async function eliminatePlayer(playerId) {
     .from("game_players")
     .update({ is_eliminated: true, eliminated_at: new Date().toISOString() })
     .eq("id", playerId);
-
   if (error) throw new Error(`Spieler konnte nicht eliminiert werden: ${error.message}`);
 }
 
@@ -225,7 +211,6 @@ async function updateGameTurn(gameId, nextTurnOrder, status = "playing") {
       status
     })
     .eq("id", gameId);
-
   if (error) throw new Error(`Spielstand konnte nicht aktualisiert werden: ${error.message}`);
 }
 
@@ -247,7 +232,6 @@ function initPracticePage() {
   el.animalForm.addEventListener("submit", handleMove);
   el.hintButton.addEventListener("click", showHint);
   el.newRoundButton.addEventListener("click", () => startNewRound(true));
-
   start();
 
   async function start() {
@@ -319,10 +303,7 @@ function initPracticePage() {
 
   function showHint() {
     const options = availableAnimals(state.animals, state.requiredLetter, state.moves.map((m) => m.animal));
-    if (!options.length) {
-      setMessage(el.message, `Kein Tipp für ${state.requiredLetter.toUpperCase()} gefunden.`, "warning");
-      return;
-    }
+    if (!options.length) { setMessage(el.message, `Kein Tipp für ${state.requiredLetter.toUpperCase()} gefunden.`, "warning"); return; }
     setMessage(el.message, `Tipp: ${randomItem(options).name}`, "success");
   }
 
@@ -344,9 +325,9 @@ function initOnlinePage() {
     localPlayer: null,
     players: [],
     moves: [],
-    refreshTimer: null,
     countdownTimer: null,
-    isRefreshing: false  // Flag um doppelte Refreshes zu verhindern
+    realtimeChannel: null,
+    fallbackTimer: null
   };
 
   const el = mapElements({
@@ -385,9 +366,7 @@ function initOnlinePage() {
   el.moveForm.addEventListener("submit", handleMove);
   el.refreshButton.addEventListener("click", refreshLobby);
   el.newRoundButton.addEventListener("click", newRound);
-
   if (startGameButton) startGameButton.addEventListener("click", handleStartGame);
-
   if (localAnimalForm && localAnimalInput && localAnimalMessage) {
     localAnimalForm.addEventListener("submit", handleAddLocalAnimal);
   }
@@ -443,11 +422,16 @@ function initOnlinePage() {
 
       state.game = game;
       state.localPlayer = player;
+      state.players = [player];
+      state.moves = [];
       el.lobbyTicket.hidden = false;
       el.lobbyCode.textContent = code;
 
-      startAutoRefresh();
-      await refreshLobby();
+      // Starte Realtime-Subscription für sofortige Updates
+      subscribeToGame(game.id);
+      startCountdownTimer();
+
+      render();
       setMessage(el.message, `Lobby ${code} erstellt. Drücke "Spiel starten" wenn alle bereit sind.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
@@ -465,8 +449,13 @@ function initOnlinePage() {
       el.lobbyTicket.hidden = false;
       el.lobbyCode.textContent = game.code;
 
-      startAutoRefresh();
+      // Lade alles initial
       await refreshLobby();
+
+      // Starte Realtime
+      subscribeToGame(game.id);
+      startCountdownTimer();
+
       setMessage(el.message, `Du bist Lobby ${game.code} beigetreten. Warte bis der Host startet.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
@@ -481,29 +470,25 @@ function initOnlinePage() {
 
   async function startNewGameRound(successPrefix) {
     try {
-      // 1. Reaktiviere alle Spieler
+      // Reaktiviere alle Spieler
       await supabaseClient
         .from("game_players")
         .update({ is_eliminated: false, eliminated_at: null })
         .eq("game_id", state.game.id);
 
-      // 2. Lösche ALLE alten Moves
+      // Lösche alte Moves
       const { error: deleteError } = await supabaseClient
         .from("moves")
         .delete()
         .eq("game_id", state.game.id);
 
-      if (deleteError) {
-        throw new Error("Alte Tiere konnten nicht gelöscht werden: " + deleteError.message);
-      }
+      if (deleteError) throw new Error("Alte Tiere konnten nicht gelöscht werden: " + deleteError.message);
 
-      // 3. Lokalen State sofort leeren
+      // Lokal sofort leeren
       state.moves = [];
 
-      // 4. Wähle Starttier
       const animal = randomItem(state.animals) || { name: "Turmfalke" };
 
-      // 5. Update game in DB
       const { data: updatedGame, error: gameError } = await supabaseClient
         .from("games")
         .update({
@@ -519,10 +504,8 @@ function initOnlinePage() {
 
       if (gameError) throw new Error(gameError.message);
 
-      // 6. Sofort lokalen state.game updaten (kein Warten auf refresh)
+      // Sofort lokal updaten
       state.game = updatedGame;
-
-      // 7. Render sofort
       render();
 
       setMessage(el.message, `${successPrefix} Starttier: ${animal.name}`, "success");
@@ -541,20 +524,74 @@ function initOnlinePage() {
     }
   }
 
-  // FIX: refreshLobby mit Lock damit nicht doppelt läuft
+  // REALTIME: Sofortige Updates ohne Polling
+  function subscribeToGame(gameId) {
+    // Alte Subscription entfernen
+    if (state.realtimeChannel) {
+      supabaseClient.removeChannel(state.realtimeChannel);
+    }
+
+    state.realtimeChannel = supabaseClient
+      .channel(`game-${gameId}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "games", filter: `id=eq.${gameId}` },
+        (payload) => {
+          if (payload.new) {
+            state.game = payload.new;
+            render();
+          }
+        }
+      )
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "game_players", filter: `game_id=eq.${gameId}` },
+        async () => {
+          state.players = await loadGamePlayers(gameId);
+          render();
+        }
+      )
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "moves", filter: `game_id=eq.${gameId}` },
+        async () => {
+          state.moves = await loadGameMoves(gameId);
+          render();
+        }
+      )
+      .subscribe((status) => {
+        console.log("Realtime status:", status);
+        if (status === "SUBSCRIBED") {
+          // Wenn Realtime klappt: Fallback-Polling stoppen
+          if (state.fallbackTimer) {
+            clearInterval(state.fallbackTimer);
+            state.fallbackTimer = null;
+          }
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          // Fallback: Wenn Realtime nicht klappt → trotzdem polling
+          startFallbackPolling();
+        }
+      });
+
+    // Fallback nach 3 Sekunden falls Realtime nicht kommt
+    setTimeout(() => {
+      if (!state.fallbackTimer && state.realtimeChannel?.state !== "joined") {
+        startFallbackPolling();
+      }
+    }, 3000);
+  }
+
+  function startFallbackPolling() {
+    if (state.fallbackTimer) return;
+    console.log("Realtime nicht verfügbar, nutze Fallback-Polling");
+    state.fallbackTimer = setInterval(refreshLobby, 1000);
+  }
+
   async function refreshLobby() {
     if (!state.game?.id) return;
-    if (state.isRefreshing) return;  // Verhindert parallele Refreshes
-
-    state.isRefreshing = true;
-
     try {
       const [game, players, moves] = await Promise.all([
         loadGameById(state.game.id),
         loadGamePlayers(state.game.id),
         loadGameMoves(state.game.id)
       ]);
-
       state.game = game;
       state.players = players;
       state.moves = moves;
@@ -562,20 +599,22 @@ function initOnlinePage() {
       if (state.game.timer_enabled && state.game.status === "playing") {
         await checkTimerExpiration();
       }
-
       render();
     } catch (error) {
       setMessage(el.message, error.message, "error");
-    } finally {
-      state.isRefreshing = false;
     }
   }
 
   async function checkTimerExpiration() {
     const currentPlayer = getCurrentOnlinePlayer();
     const activePlayers = state.players.filter((p) => !p.is_eliminated);
-
     if (!currentPlayer || activePlayers.length <= 1 || !state.game.turn_started_at || getRemainingSeconds() > 0) return;
+
+    // Nur der aktuelle Spieler oder der erste aktive macht das Eliminieren
+    // (sonst rufen alle Browser gleichzeitig die Funktion auf)
+    if (state.localPlayer?.id !== currentPlayer.id && state.localPlayer?.turn_order !== activePlayers[0]?.turn_order) {
+      return;
+    }
 
     await eliminatePlayer(currentPlayer.id);
     const updatedPlayers = state.players.map((p) =>
@@ -626,7 +665,7 @@ function initOnlinePage() {
       await updateGameAfterMove(state.game.id, animalName, nextRequiredLetter, nextTurnOrder || currentPlayer.turn_order);
 
       el.animalInput.value = "";
-      await refreshLobby();
+      // Realtime updated automatisch - kein refresh nötig
       setMessage(el.message, `${state.guestName} spielt: ${toTitleCase(animalName)}`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
@@ -652,14 +691,16 @@ function initOnlinePage() {
     await startNewGameRound("Neue Runde gestartet.");
   }
 
-  function startAutoRefresh() {
-    if (state.refreshTimer) clearInterval(state.refreshTimer);
+  function startCountdownTimer() {
     if (state.countdownTimer) clearInterval(state.countdownTimer);
-
-    // Schnelleres Refresh für weniger Verzögerung
-    state.refreshTimer = setInterval(refreshLobby, 1500);
-    // Timer-Anzeige öfters updaten für flüssigere Sekunden-Anzeige
-    state.countdownTimer = setInterval(renderTimerOnly, 250);
+    // Timer-Anzeige nur jede halbe Sekunde - reicht für Sekunden-genau
+    state.countdownTimer = setInterval(() => {
+      renderTimerOnly();
+      // Auch Timer-Ablauf prüfen
+      if (state.game?.timer_enabled && state.game?.status === "playing") {
+        checkTimerExpiration();
+      }
+    }, 500);
   }
 
   function getCurrentOnlinePlayer() {
@@ -674,29 +715,20 @@ function initOnlinePage() {
     return Math.max(0, Number(state.game.turn_seconds || 60) - elapsed);
   }
 
-  // KOMPLETT NEU: Stabile Timer-Anzeige
   function getTimerDisplayText() {
     if (!state.game) return "—";
-
-    // Wenn Timer ausgeschaltet → IMMER "Aus"
     if (!state.game.timer_enabled) return "Aus";
-
-    // Status entscheidet was angezeigt wird
     const status = state.game.status;
-
     if (status === "waiting") return "Wartend";
     if (status === "finished") return "Beendet";
-
     if (status === "playing") {
       const remaining = getRemainingSeconds();
       if (remaining === null) return "Wartend";
       return formatTimer(remaining);
     }
-
     return "—";
   }
 
-  // Timer-Anzeige ohne Flackern
   let lastTimerText = "";
   function renderTimerOnly() {
     if (!state.game) return;
@@ -716,10 +748,8 @@ function initOnlinePage() {
       ? state.game.current_required_letter.toUpperCase()
       : "---";
 
-    // Timer-Update via gleicher Funktion
     renderTimerOnly();
 
-    // Status-Anzeige
     if (!state.game) {
       el.turnBadge.textContent = "Keine aktive Lobby";
     } else if (state.game.status === "waiting") {
@@ -732,7 +762,6 @@ function initOnlinePage() {
       el.turnBadge.textContent = "Warte...";
     }
 
-    // Start-Button
     if (startGameButton) {
       if (state.game?.status === "waiting" && state.players.length >= 2) {
         startGameButton.hidden = false;
