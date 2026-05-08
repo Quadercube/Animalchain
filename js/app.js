@@ -15,7 +15,7 @@ const supabaseClient = window.supabase
 
 const page = document.body.dataset.page;
 
-console.log("Animalchain app.js v7 (Realtime) geladen");
+console.log("Animalchain app.js v8 (Local Timer) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -23,7 +23,6 @@ if (page === "local") initLocalPage();
 
 async function loadApprovedAnimals() {
   ensureSupabase();
-
   let allAnimals = [];
   let from = 0;
   const pageSize = 1000;
@@ -36,10 +35,7 @@ async function loadApprovedAnimals() {
       .order("name", { ascending: true })
       .range(from, from + pageSize - 1);
 
-    if (error) {
-      throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
-    }
-
+    if (error) throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
     if (!data || data.length === 0) break;
     allAnimals = allAnimals.concat(data);
     if (data.length < pageSize) break;
@@ -52,37 +48,23 @@ async function loadApprovedAnimals() {
 
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
   ensureSupabase();
-
   const { data: game, error: gameError } = await supabaseClient
     .from("games")
     .insert({
-      code,
-      status: "waiting",
-      max_players: 4,
-      last_animal: "Turmfalke",
-      current_required_letter: "e",
-      current_turn_order: 1,
-      timer_enabled: timerEnabled,
-      turn_seconds: turnSeconds,
-      turn_started_at: null
+      code, status: "waiting", max_players: 4,
+      last_animal: "Turmfalke", current_required_letter: "e", current_turn_order: 1,
+      timer_enabled: timerEnabled, turn_seconds: turnSeconds, turn_started_at: null
     })
-    .select()
-    .single();
-
+    .select().single();
   if (gameError) throw new Error(`Lobby konnte nicht erstellt werden: ${gameError.message}`);
 
   const { data: player, error: playerError } = await supabaseClient
     .from("game_players")
     .insert({
-      game_id: game.id,
-      user_id: null,
-      guest_name: cleanPlayerName(guestName),
-      turn_order: 1,
-      is_eliminated: false
+      game_id: game.id, user_id: null, guest_name: cleanPlayerName(guestName),
+      turn_order: 1, is_eliminated: false
     })
-    .select()
-    .single();
-
+    .select().single();
   if (playerError) throw new Error(`Spieler konnte nicht erstellt werden: ${playerError.message}`);
   return { game, player };
 }
@@ -90,10 +72,7 @@ async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
 async function findGameByCode(code) {
   ensureSupabase();
   const { data, error } = await supabaseClient
-    .from("games")
-    .select("*")
-    .eq("code", normalizeLobbyCode(code))
-    .single();
+    .from("games").select("*").eq("code", normalizeLobbyCode(code)).single();
   if (error) throw new Error("Lobby wurde nicht gefunden.");
   return data;
 }
@@ -101,10 +80,7 @@ async function findGameByCode(code) {
 async function loadGameById(gameId) {
   ensureSupabase();
   const { data, error } = await supabaseClient
-    .from("games")
-    .select("*")
-    .eq("id", gameId)
-    .single();
+    .from("games").select("*").eq("id", gameId).single();
   if (error) throw new Error(`Lobby konnte nicht geladen werden: ${error.message}`);
   return data;
 }
@@ -112,10 +88,7 @@ async function loadGameById(gameId) {
 async function loadGamePlayers(gameId) {
   ensureSupabase();
   const { data, error } = await supabaseClient
-    .from("game_players")
-    .select("*")
-    .eq("game_id", gameId)
-    .order("turn_order", { ascending: true });
+    .from("game_players").select("*").eq("game_id", gameId).order("turn_order", { ascending: true });
   if (error) throw new Error(`Spieler konnten nicht geladen werden: ${error.message}`);
   return data || [];
 }
@@ -123,10 +96,7 @@ async function loadGamePlayers(gameId) {
 async function loadGameMoves(gameId) {
   ensureSupabase();
   const { data, error } = await supabaseClient
-    .from("moves")
-    .select("*")
-    .eq("game_id", gameId)
-    .order("move_number", { ascending: true });
+    .from("moves").select("*").eq("game_id", gameId).order("move_number", { ascending: true });
   if (error) throw new Error(`Spielzüge konnten nicht geladen werden: ${error.message}`);
   return data || [];
 }
@@ -134,19 +104,13 @@ async function loadGameMoves(gameId) {
 async function joinGame(game, guestName) {
   const players = await loadGamePlayers(game.id);
   if (players.length >= game.max_players) throw new Error("Diese Lobby ist voll.");
-
   const { data: player, error } = await supabaseClient
     .from("game_players")
     .insert({
-      game_id: game.id,
-      user_id: null,
-      guest_name: cleanPlayerName(guestName),
-      turn_order: players.length + 1,
-      is_eliminated: false
+      game_id: game.id, user_id: null, guest_name: cleanPlayerName(guestName),
+      turn_order: players.length + 1, is_eliminated: false
     })
-    .select()
-    .single();
-
+    .select().single();
   if (error) throw new Error(`Beitritt fehlgeschlagen: ${error.message}`);
   return player;
 }
@@ -160,19 +124,13 @@ async function saveMove({ gameId, gamePlayerId, guestName, animalName, requiredL
   const { data, error } = await supabaseClient
     .from("moves")
     .insert({
-      game_id: gameId,
-      game_player_id: gamePlayerId,
-      player_id: null,
-      animal_name: toTitleCase(cleanAnimal),
-      normalized_animal_name: normalizedAnimal,
+      game_id: gameId, game_player_id: gamePlayerId, player_id: null,
+      animal_name: toTitleCase(cleanAnimal), normalized_animal_name: normalizedAnimal,
       guest_name: cleanPlayerName(guestName) || "Gast",
       required_letter: String(requiredLetter || "").toLowerCase(),
-      next_required_letter: nextRequiredLetter,
-      move_number: moveNumber
+      next_required_letter: nextRequiredLetter, move_number: moveNumber
     })
-    .select()
-    .single();
-
+    .select().single();
   if (error) throw new Error(`Spielzug konnte nicht gespeichert werden: ${error.message}`);
   return data;
 }
@@ -218,14 +176,10 @@ function initPracticePage() {
   const state = { animals: [], lastAnimal: "Turmfalke", requiredLetter: "e", moves: [] };
 
   const el = mapElements({
-    lastAnimal: "#practiceLastAnimal",
-    requiredLetter: "#practiceRequiredLetter",
-    moveCount: "#practiceMoveCount",
-    animalForm: "#practiceAnimalForm",
-    animalInput: "#practiceAnimalInput",
-    message: "#practiceMessage",
-    hintButton: "#practiceHintButton",
-    newRoundButton: "#practiceNewRoundButton",
+    lastAnimal: "#practiceLastAnimal", requiredLetter: "#practiceRequiredLetter",
+    moveCount: "#practiceMoveCount", animalForm: "#practiceAnimalForm",
+    animalInput: "#practiceAnimalInput", message: "#practiceMessage",
+    hintButton: "#practiceHintButton", newRoundButton: "#practiceNewRoundButton",
     movesList: "#practiceMovesList"
   });
 
@@ -239,8 +193,7 @@ function initPracticePage() {
       state.animals = await loadApprovedAnimals();
       if (!state.animals.length) {
         setMessage(el.message, "Keine Tiere in Supabase gefunden.", "warning");
-        render();
-        return;
+        render(); return;
       }
       startNewRound(false);
       setMessage(el.message, `${state.animals.length} Tiere geladen. Du bist dran.`, "success");
@@ -327,31 +280,25 @@ function initOnlinePage() {
     moves: [],
     countdownTimer: null,
     realtimeChannel: null,
-    fallbackTimer: null
+    fallbackTimer: null,
+    // NEU: Lokaler Timer-Track
+    lastSeenTurnKey: null,
+    localTurnStartedAt: null
   };
 
   const el = mapElements({
-    nameForm: "#onlineNameForm",
-    guestName: "#onlineGuestName",
-    timerEnabled: "#onlineTimerEnabled",
-    turnSeconds: "#onlineTurnSeconds",
+    nameForm: "#onlineNameForm", guestName: "#onlineGuestName",
+    timerEnabled: "#onlineTimerEnabled", turnSeconds: "#onlineTurnSeconds",
     createLobbyButton: "#onlineCreateLobbyButton",
-    lobbyTicket: "#onlineLobbyTicket",
-    lobbyCode: "#onlineLobbyCode",
+    lobbyTicket: "#onlineLobbyTicket", lobbyCode: "#onlineLobbyCode",
     copyCodeButton: "#onlineCopyCodeButton",
-    joinForm: "#onlineJoinForm",
-    joinCode: "#onlineJoinCode",
+    joinForm: "#onlineJoinForm", joinCode: "#onlineJoinCode",
     message: "#onlineMessage",
-    lastAnimal: "#onlineLastAnimal",
-    requiredLetter: "#onlineRequiredLetter",
-    timerDisplay: "#onlineTimerDisplay",
-    turnBadge: "#onlineTurnBadge",
-    moveForm: "#onlineMoveForm",
-    animalInput: "#onlineAnimalInput",
-    refreshButton: "#onlineRefreshButton",
-    newRoundButton: "#onlineNewRoundButton",
-    playersList: "#onlinePlayersList",
-    movesList: "#onlineMovesList"
+    lastAnimal: "#onlineLastAnimal", requiredLetter: "#onlineRequiredLetter",
+    timerDisplay: "#onlineTimerDisplay", turnBadge: "#onlineTurnBadge",
+    moveForm: "#onlineMoveForm", animalInput: "#onlineAnimalInput",
+    refreshButton: "#onlineRefreshButton", newRoundButton: "#onlineNewRoundButton",
+    playersList: "#onlinePlayersList", movesList: "#onlineMovesList"
   });
 
   const startGameButton = optionalQs("#onlineStartGameButton");
@@ -414,8 +361,7 @@ function initOnlinePage() {
     try {
       const code = generateLobbyCode();
       const { game, player } = await createGame({
-        code,
-        guestName: state.guestName,
+        code, guestName: state.guestName,
         timerEnabled: el.timerEnabled.checked,
         turnSeconds: Number(el.turnSeconds.value || 60)
       });
@@ -427,10 +373,8 @@ function initOnlinePage() {
       el.lobbyTicket.hidden = false;
       el.lobbyCode.textContent = code;
 
-      // Starte Realtime-Subscription für sofortige Updates
       subscribeToGame(game.id);
       startCountdownTimer();
-
       render();
       setMessage(el.message, `Lobby ${code} erstellt. Drücke "Spiel starten" wenn alle bereit sind.`, "success");
     } catch (error) {
@@ -449,13 +393,9 @@ function initOnlinePage() {
       el.lobbyTicket.hidden = false;
       el.lobbyCode.textContent = game.code;
 
-      // Lade alles initial
       await refreshLobby();
-
-      // Starte Realtime
       subscribeToGame(game.id);
       startCountdownTimer();
-
       setMessage(el.message, `Du bist Lobby ${game.code} beigetreten. Warte bis der Host startet.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
@@ -470,44 +410,35 @@ function initOnlinePage() {
 
   async function startNewGameRound(successPrefix) {
     try {
-      // Reaktiviere alle Spieler
       await supabaseClient
         .from("game_players")
         .update({ is_eliminated: false, eliminated_at: null })
         .eq("game_id", state.game.id);
 
-      // Lösche alte Moves
       const { error: deleteError } = await supabaseClient
-        .from("moves")
-        .delete()
-        .eq("game_id", state.game.id);
-
+        .from("moves").delete().eq("game_id", state.game.id);
       if (deleteError) throw new Error("Alte Tiere konnten nicht gelöscht werden: " + deleteError.message);
 
-      // Lokal sofort leeren
       state.moves = [];
+      // Reset Timer-Tracking
+      state.lastSeenTurnKey = null;
+      state.localTurnStartedAt = null;
 
       const animal = randomItem(state.animals) || { name: "Turmfalke" };
 
       const { data: updatedGame, error: gameError } = await supabaseClient
         .from("games")
         .update({
-          status: "playing",
-          last_animal: animal.name,
+          status: "playing", last_animal: animal.name,
           current_required_letter: getLastLetter(animal.name),
           current_turn_order: 1,
           turn_started_at: new Date().toISOString()
         })
-        .eq("id", state.game.id)
-        .select()
-        .single();
+        .eq("id", state.game.id).select().single();
 
       if (gameError) throw new Error(gameError.message);
-
-      // Sofort lokal updaten
       state.game = updatedGame;
       render();
-
       setMessage(el.message, `${successPrefix} Starttier: ${animal.name}`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
@@ -524,9 +455,7 @@ function initOnlinePage() {
     }
   }
 
-  // REALTIME: Sofortige Updates ohne Polling
   function subscribeToGame(gameId) {
-    // Alte Subscription entfernen
     if (state.realtimeChannel) {
       supabaseClient.removeChannel(state.realtimeChannel);
     }
@@ -559,18 +488,15 @@ function initOnlinePage() {
       .subscribe((status) => {
         console.log("Realtime status:", status);
         if (status === "SUBSCRIBED") {
-          // Wenn Realtime klappt: Fallback-Polling stoppen
           if (state.fallbackTimer) {
             clearInterval(state.fallbackTimer);
             state.fallbackTimer = null;
           }
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          // Fallback: Wenn Realtime nicht klappt → trotzdem polling
           startFallbackPolling();
         }
       });
 
-    // Fallback nach 3 Sekunden falls Realtime nicht kommt
     setTimeout(() => {
       if (!state.fallbackTimer && state.realtimeChannel?.state !== "joined") {
         startFallbackPolling();
@@ -595,42 +521,49 @@ function initOnlinePage() {
       state.game = game;
       state.players = players;
       state.moves = moves;
-
-      if (state.game.timer_enabled && state.game.status === "playing") {
-        await checkTimerExpiration();
-      }
       render();
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
   }
 
-  async function checkTimerExpiration() {
+  // NEUE LOGIK: Timer läuft lokal beim aktiven Spieler
+  // Wenn Zeit abläuft → eliminiert sich selbst
+  async function checkLocalTimerExpiration() {
+    if (!state.game?.timer_enabled || state.game?.status !== "playing") return;
+
     const currentPlayer = getCurrentOnlinePlayer();
+    if (!currentPlayer || currentPlayer.is_eliminated) return;
+
+    // Nur der aktive Spieler prüft seinen eigenen Timer
+    if (state.localPlayer?.id !== currentPlayer.id) return;
+
+    const remaining = getRemainingSeconds();
+    if (remaining === null || remaining > 0) return;
+
+    // Zeit abgelaufen - eliminiere mich selbst
     const activePlayers = state.players.filter((p) => !p.is_eliminated);
-    if (!currentPlayer || activePlayers.length <= 1 || !state.game.turn_started_at || getRemainingSeconds() > 0) return;
+    if (activePlayers.length <= 1) return;
 
-    // Nur der aktuelle Spieler oder der erste aktive macht das Eliminieren
-    // (sonst rufen alle Browser gleichzeitig die Funktion auf)
-    if (state.localPlayer?.id !== currentPlayer.id && state.localPlayer?.turn_order !== activePlayers[0]?.turn_order) {
-      return;
+    try {
+      await eliminatePlayer(currentPlayer.id);
+      const updatedPlayers = state.players.map((p) =>
+        p.id === currentPlayer.id ? { ...p, is_eliminated: true } : p
+      );
+      const nextTurnOrder = getNextActiveTurnOrder(updatedPlayers, currentPlayer.turn_order);
+      const remainingPlayers = updatedPlayers.filter((p) => !p.is_eliminated);
+
+      await updateGameTurn(
+        state.game.id,
+        nextTurnOrder || currentPlayer.turn_order,
+        remainingPlayers.length <= 1 ? "finished" : "playing"
+      );
+
+      state.players = updatedPlayers;
+      setMessage(el.message, `Deine Zeit ist abgelaufen!`, "warning");
+    } catch (err) {
+      console.error(err);
     }
-
-    await eliminatePlayer(currentPlayer.id);
-    const updatedPlayers = state.players.map((p) =>
-      p.id === currentPlayer.id ? { ...p, is_eliminated: true } : p
-    );
-    const nextTurnOrder = getNextActiveTurnOrder(updatedPlayers, currentPlayer.turn_order);
-    const remainingPlayers = updatedPlayers.filter((p) => !p.is_eliminated);
-
-    await updateGameTurn(
-      state.game.id,
-      nextTurnOrder || currentPlayer.turn_order,
-      remainingPlayers.length <= 1 ? "finished" : "playing"
-    );
-
-    state.players = updatedPlayers;
-    setMessage(el.message, `${currentPlayer.guest_name} ist wegen Zeitablauf ausgeschieden.`, "warning");
   }
 
   async function handleMove(event) {
@@ -653,10 +586,8 @@ function initOnlinePage() {
     try {
       const nextRequiredLetter = getLastLetter(animalName);
       await saveMove({
-        gameId: state.game.id,
-        gamePlayerId: state.localPlayer.id,
-        guestName: state.guestName,
-        animalName,
+        gameId: state.game.id, gamePlayerId: state.localPlayer.id,
+        guestName: state.guestName, animalName,
         requiredLetter: state.game.current_required_letter,
         moveNumber: state.moves.length + 1
       });
@@ -665,7 +596,6 @@ function initOnlinePage() {
       await updateGameAfterMove(state.game.id, animalName, nextRequiredLetter, nextTurnOrder || currentPlayer.turn_order);
 
       el.animalInput.value = "";
-      // Realtime updated automatisch - kein refresh nötig
       setMessage(el.message, `${state.guestName} spielt: ${toTitleCase(animalName)}`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
@@ -693,25 +623,34 @@ function initOnlinePage() {
 
   function startCountdownTimer() {
     if (state.countdownTimer) clearInterval(state.countdownTimer);
-    // Timer-Anzeige nur jede halbe Sekunde - reicht für Sekunden-genau
+    // Timer alle 250ms aktualisieren für flüssige Anzeige
     state.countdownTimer = setInterval(() => {
       renderTimerOnly();
-      // Auch Timer-Ablauf prüfen
-      if (state.game?.timer_enabled && state.game?.status === "playing") {
-        checkTimerExpiration();
-      }
-    }, 500);
+      checkLocalTimerExpiration();
+    }, 250);
   }
 
   function getCurrentOnlinePlayer() {
     return state.players.find((p) => p.turn_order === state.game?.current_turn_order) || null;
   }
 
+  // NEUE LOGIK: Timer basiert auf LOKALER Zeit ab dem Moment wo der Spieler den Zug sieht
   function getRemainingSeconds() {
     if (!state.game?.timer_enabled || !state.game?.turn_started_at || state.game?.status !== "playing") {
       return null;
     }
-    const elapsed = Math.floor((Date.now() - new Date(state.game.turn_started_at).getTime()) / 1000);
+
+    // Eindeutiger Schlüssel für diesen Zug
+    const turnKey = `${state.game.id}-${state.game.current_turn_order}-${state.game.turn_started_at}`;
+
+    // Wenn dieser Zug neu für uns ist → lokalen Startzeitpunkt setzen
+    if (state.lastSeenTurnKey !== turnKey) {
+      state.lastSeenTurnKey = turnKey;
+      state.localTurnStartedAt = Date.now();
+    }
+
+    // Berechne Restzeit basierend auf LOKALER Zeit (kein Server/Netzwerk-Lag)
+    const elapsed = Math.floor((Date.now() - state.localTurnStartedAt) / 1000);
     return Math.max(0, Number(state.game.turn_seconds || 60) - elapsed);
   }
 
@@ -818,18 +757,12 @@ function initLocalPage() {
   };
 
   const el = mapElements({
-    playerForm: "#localPlayerForm",
-    playerName: "#localPlayerName",
-    startButton: "#localStartButton",
-    playersList: "#localPlayersList",
-    message: "#localMessage",
-    lastAnimal: "#localLastAnimal",
-    requiredLetter: "#localRequiredLetter",
-    moveCount: "#localMoveCount",
-    turnBadge: "#localTurnBadge",
-    moveForm: "#localMoveForm",
-    animalInput: "#localAnimalInput",
-    movesList: "#localMovesList"
+    playerForm: "#localPlayerForm", playerName: "#localPlayerName",
+    startButton: "#localStartButton", playersList: "#localPlayersList",
+    message: "#localMessage", lastAnimal: "#localLastAnimal",
+    requiredLetter: "#localRequiredLetter", moveCount: "#localMoveCount",
+    turnBadge: "#localTurnBadge", moveForm: "#localMoveForm",
+    animalInput: "#localAnimalInput", movesList: "#localMovesList"
   });
 
   el.playerForm.addEventListener("submit", addPlayer);
@@ -930,13 +863,11 @@ function createLocalAnimal(name) {
   const cleanName = cleanAnimalName(name);
   const normalizedName = normalizeAnimalName(cleanName);
   return {
-    id: `local-${normalizedName}`,
-    name: toTitleCase(cleanName),
+    id: `local-${normalizedName}`, name: toTitleCase(cleanName),
     normalized_name: normalizedName,
     first_letter: getFirstLetter(normalizedName),
     last_letter: getLastLetter(normalizedName),
-    status: "approved",
-    local: true
+    status: "approved", local: true
   };
 }
 
@@ -1023,16 +954,10 @@ function cleanAnimalName(value) { return String(value || "").trim().replace(/\s+
 
 function normalizeAnimalName(value) {
   return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/ä/g, "a")
-    .replace(/ö/g, "o")
-    .replace(/ü/g, "u")
-    .replace(/ß/g, "ss")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z\s-]/g, "")
-    .replace(/\s+/g, " ");
+    .trim().toLowerCase()
+    .replace(/ä/g, "a").replace(/ö/g, "o").replace(/ü/g, "u").replace(/ß/g, "ss")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z\s-]/g, "").replace(/\s+/g, " ");
 }
 
 function getFirstLetter(value) { return normalizeAnimalName(value).replace(/[^a-z]/g, "").charAt(0) || ""; }
