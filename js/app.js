@@ -13,7 +13,7 @@ const supabaseClient = window.supabase
 
 const page = document.body.dataset.page;
 
-console.log("Animalchain app.js STRICT v4 geladen");
+console.log("Animalchain app.js STRICT v5 geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -41,22 +41,18 @@ async function loadApprovedAnimals() {
     if (!data || data.length === 0) break;
 
     allAnimals = allAnimals.concat(data);
-    console.log(`Geladen: ${allAnimals.length} Tiere bisher...`);
 
     if (data.length < pageSize) break;
     from += pageSize;
   }
 
   console.log("Insgesamt aus Supabase geladen:", allAnimals.length, "Tiere");
-  console.log("Schlange dabei?", allAnimals.some(t => t.name === "Schlange"));
 
   return mergeAnimals(allAnimals, loadLocalAnimals());
 }
 
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
   ensureSupabase();
-
-  const now = new Date().toISOString();
 
   const { data: game, error: gameError } = await supabaseClient
     .from("games")
@@ -69,7 +65,7 @@ async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
       current_turn_order: 1,
       timer_enabled: timerEnabled,
       turn_seconds: turnSeconds,
-      turn_started_at: now
+      turn_started_at: null
     })
     .select()
     .single();
@@ -184,14 +180,7 @@ async function joinGame(game, guestName) {
     throw new Error(`Beitritt fehlgeschlagen: ${error.message}`);
   }
 
-  await supabaseClient
-    .from("games")
-    .update({
-      status: "playing",
-      turn_started_at: new Date().toISOString()
-    })
-    .eq("id", game.id);
-
+  // KEIN Auto-Start - Status bleibt "waiting" bis Host startet
   return player;
 }
 
@@ -468,6 +457,7 @@ function initPracticePage() {
         `;
   }
 }
+
 function initOnlinePage() {
   const state = {
     animals: [],
@@ -582,22 +572,12 @@ function initOnlinePage() {
     try {
       const code = generateLobbyCode();
 
-      // Lobby wird im "waiting" Status erstellt - KEIN Timer-Start
       const { game, player } = await createGame({
         code,
         guestName: state.guestName,
         timerEnabled: el.timerEnabled.checked,
         turnSeconds: Number(el.turnSeconds.value || 60)
       });
-
-      // Setze turn_started_at auf null - Timer läuft erst beim Spielstart
-      await supabaseClient
-        .from("games")
-        .update({ turn_started_at: null, status: "waiting" })
-        .eq("id", game.id);
-
-      game.turn_started_at = null;
-      game.status = "waiting";
 
       state.game = game;
       state.localPlayer = player;
@@ -647,24 +627,41 @@ function initOnlinePage() {
       return;
     }
 
+    await startNewGameRound("Spiel gestartet!");
+  }
+
+  // Zentrale Funktion für neue Runde - löscht alte Moves komplett
+  async function startNewGameRound(successPrefix) {
     try {
-      // Reaktiviere alle ausgeschiedenen Spieler für eine neue Runde
-      await supabaseClient
+      // 1. Reaktiviere alle ausgeschiedenen Spieler
+      const { error: playersError } = await supabaseClient
         .from("game_players")
         .update({ is_eliminated: false, eliminated_at: null })
         .eq("game_id", state.game.id);
 
-      // Lösche alte Moves für eine frische Runde
-      await supabaseClient
+      if (playersError) {
+        console.error("Fehler beim Reaktivieren:", playersError);
+      }
+
+      // 2. WICHTIG: Lösche ALLE alten Moves - mit Verifikation
+      const { error: deleteError } = await supabaseClient
         .from("moves")
         .delete()
         .eq("game_id", state.game.id);
 
-      // Wähle zufälliges Starttier
+      if (deleteError) {
+        console.error("Fehler beim Löschen alter Moves:", deleteError);
+        throw new Error("Alte Tiere konnten nicht gelöscht werden: " + deleteError.message);
+      }
+
+      // 3. Lokalen State sofort leeren - keine Verzögerung
+      state.moves = [];
+
+      // 4. Wähle zufälliges Starttier
       const animal = randomItem(state.animals) || { name: "Turmfalke" };
 
-      // Starte das Spiel - JETZT erst läuft der Timer
-      const { error } = await supabaseClient
+      // 5. Update game state
+      const { error: gameError } = await supabaseClient
         .from("games")
         .update({
           status: "playing",
@@ -675,12 +672,13 @@ function initOnlinePage() {
         })
         .eq("id", state.game.id);
 
-      if (error) {
-        throw new Error(error.message);
+      if (gameError) {
+        throw new Error(gameError.message);
       }
 
+      // 6. Reload alles frisch
       await refreshLobby();
-      setMessage(el.message, `Spiel gestartet! Starttier: ${animal.name}`, "success");
+      setMessage(el.message, `${successPrefix} Starttier: ${animal.name}`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
@@ -862,42 +860,7 @@ function initOnlinePage() {
       return;
     }
 
-    try {
-      // Reaktiviere alle ausgeschiedenen Spieler
-      await supabaseClient
-        .from("game_players")
-        .update({ is_eliminated: false, eliminated_at: null })
-        .eq("game_id", state.game.id);
-
-      // Lösche alle alten Moves
-      await supabaseClient
-        .from("moves")
-        .delete()
-        .eq("game_id", state.game.id);
-
-      // Neues Starttier
-      const animal = randomItem(state.animals) || { name: "Turmfalke" };
-
-      const { error } = await supabaseClient
-        .from("games")
-        .update({
-          last_animal: animal.name,
-          current_required_letter: getLastLetter(animal.name),
-          current_turn_order: 1,
-          turn_started_at: new Date().toISOString(),
-          status: "playing"
-        })
-        .eq("id", state.game.id);
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      await refreshLobby();
-      setMessage(el.message, `Neue Runde gestartet. Starttier: ${animal.name}`, "success");
-    } catch (error) {
-      setMessage(el.message, error.message, "error");
-    }
+    await startNewGameRound("Neue Runde gestartet.");
   }
 
   function startAutoRefresh() {
@@ -927,9 +890,28 @@ function initOnlinePage() {
     return Math.max(0, Number(state.game.turn_seconds || 60) - elapsed);
   }
 
+  // STABILE Timer-Anzeige - kein Flackern zwischen "Aus" und "Wartend"
+  function getTimerDisplayText() {
+    if (!state.game) return "—";
+    if (!state.game.timer_enabled) return "Aus";
+
+    if (state.game.status === "waiting") return "Wartend";
+    if (state.game.status === "finished") return "Beendet";
+    if (state.game.status === "playing") {
+      const remaining = getRemainingSeconds();
+      if (remaining === null) return "—";
+      return formatTimer(remaining);
+    }
+    return "—";
+  }
+
   function renderTimerOnly() {
     if (state.game) {
-      el.timerDisplay.textContent = formatTimer(getRemainingSeconds());
+      const newText = getTimerDisplayText();
+      // Nur ändern wenn sich was geändert hat - reduziert Flackern
+      if (el.timerDisplay.textContent !== newText) {
+        el.timerDisplay.textContent = newText;
+      }
     }
   }
 
@@ -941,9 +923,12 @@ function initOnlinePage() {
     el.requiredLetter.textContent = state.game?.current_required_letter
       ? state.game.current_required_letter.toUpperCase()
       : "---";
-    el.timerDisplay.textContent = state.game?.timer_enabled && state.game?.status === "playing"
-      ? formatTimer(getRemainingSeconds())
-      : (state.game?.status === "waiting" ? "Wartend" : "Aus");
+
+    // Stabile Timer-Anzeige
+    const newTimerText = getTimerDisplayText();
+    if (el.timerDisplay.textContent !== newTimerText) {
+      el.timerDisplay.textContent = newTimerText;
+    }
 
     // Status-Anzeige im turnBadge
     if (!state.game) {
@@ -1018,7 +1003,6 @@ function initOnlinePage() {
     }
   }
 }
-
 
 function initLocalPage() {
   const state = {
@@ -1261,7 +1245,6 @@ function mergeAnimals(databaseAnimals, localAnimals) {
   [...databaseAnimals, ...localAnimals].forEach((animal) => {
     if (!animal) return;
 
-    // Falls normalized_name fehlt, neu berechnen aus dem Namen
     const normalized = animal.normalized_name || normalizeAnimalName(animal.name);
     if (!normalized) return;
 
@@ -1400,7 +1383,7 @@ function generateLobbyCode() {
 
 function formatTimer(seconds) {
   if (seconds === null || seconds === undefined) {
-    return "Aus";
+    return "—";
   }
 
   const safeSeconds = Math.max(0, Number(seconds) || 0);
