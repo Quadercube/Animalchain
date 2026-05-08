@@ -15,7 +15,7 @@ const supabaseClient = window.supabase
 
 const page = document.body.dataset.page;
 
-console.log("Animalchain app.js v8 (Local Timer) geladen");
+console.log("Animalchain app.js v9 (Host-Kick + Turn-Fix) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -135,9 +135,10 @@ async function saveMove({ gameId, gamePlayerId, guestName, animalName, requiredL
   return data;
 }
 
+// FIX: updateGameAfterMove gibt jetzt das geupdatete Game zurück
 async function updateGameAfterMove(gameId, animalName, nextRequiredLetter, nextTurnOrder) {
   ensureSupabase();
-  const { error } = await supabaseClient
+  const { data, error } = await supabaseClient
     .from("games")
     .update({
       last_animal: toTitleCase(animalName),
@@ -146,8 +147,11 @@ async function updateGameAfterMove(gameId, animalName, nextRequiredLetter, nextT
       turn_started_at: new Date().toISOString(),
       status: "playing"
     })
-    .eq("id", gameId);
+    .eq("id", gameId)
+    .select()
+    .single();
   if (error) throw new Error(`Lobby konnte nicht aktualisiert werden: ${error.message}`);
+  return data;
 }
 
 async function eliminatePlayer(playerId) {
@@ -170,6 +174,16 @@ async function updateGameTurn(gameId, nextTurnOrder, status = "playing") {
     })
     .eq("id", gameId);
   if (error) throw new Error(`Spielstand konnte nicht aktualisiert werden: ${error.message}`);
+}
+
+// NEU: Spieler aus Lobby entfernen (Kick)
+async function kickPlayer(playerId) {
+  ensureSupabase();
+  const { error } = await supabaseClient
+    .from("game_players")
+    .delete()
+    .eq("id", playerId);
+  if (error) throw new Error(`Spieler konnte nicht entfernt werden: ${error.message}`);
 }
 
 function initPracticePage() {
@@ -276,12 +290,12 @@ function initOnlinePage() {
     guestName: "Gast",
     game: null,
     localPlayer: null,
+    isHost: false,  // NEU: Bin ich der Host?
     players: [],
     moves: [],
     countdownTimer: null,
     realtimeChannel: null,
     fallbackTimer: null,
-    // NEU: Lokaler Timer-Track
     lastSeenTurnKey: null,
     localTurnStartedAt: null
   };
@@ -317,6 +331,25 @@ function initOnlinePage() {
   if (localAnimalForm && localAnimalInput && localAnimalMessage) {
     localAnimalForm.addEventListener("submit", handleAddLocalAnimal);
   }
+
+  // NEU: Event-Delegation für Kick-Buttons
+  el.playersList.addEventListener("click", async (event) => {
+    const kickButton = event.target.closest(".kick-button");
+    if (!kickButton) return;
+
+    const playerId = kickButton.dataset.playerId;
+    const playerName = kickButton.dataset.playerName;
+    if (!playerId) return;
+
+    if (!confirm(`${playerName} wirklich aus der Lobby entfernen?`)) return;
+
+    try {
+      await kickPlayer(playerId);
+      setMessage(el.message, `${playerName} wurde aus der Lobby entfernt.`, "success");
+    } catch (error) {
+      setMessage(el.message, error.message, "error");
+    }
+  });
 
   start();
 
@@ -368,6 +401,7 @@ function initOnlinePage() {
 
       state.game = game;
       state.localPlayer = player;
+      state.isHost = true;  // Wer erstellt = Host
       state.players = [player];
       state.moves = [];
       el.lobbyTicket.hidden = false;
@@ -376,7 +410,7 @@ function initOnlinePage() {
       subscribeToGame(game.id);
       startCountdownTimer();
       render();
-      setMessage(el.message, `Lobby ${code} erstellt. Drücke "Spiel starten" wenn alle bereit sind.`, "success");
+      setMessage(el.message, `Lobby ${code} erstellt. Du bist der Host.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
@@ -390,6 +424,7 @@ function initOnlinePage() {
 
       state.game = game;
       state.localPlayer = player;
+      state.isHost = false;  // Joiner ist nie Host
       el.lobbyTicket.hidden = false;
       el.lobbyCode.textContent = game.code;
 
@@ -420,18 +455,22 @@ function initOnlinePage() {
       if (deleteError) throw new Error("Alte Tiere konnten nicht gelöscht werden: " + deleteError.message);
 
       state.moves = [];
-      // Reset Timer-Tracking
       state.lastSeenTurnKey = null;
       state.localTurnStartedAt = null;
 
       const animal = randomItem(state.animals) || { name: "Turmfalke" };
+
+      // Hole aktuelle Spieler um den ersten Spieler zu finden
+      const currentPlayers = await loadGamePlayers(state.game.id);
+      const firstPlayer = currentPlayers[0];
+      const firstTurnOrder = firstPlayer?.turn_order || 1;
 
       const { data: updatedGame, error: gameError } = await supabaseClient
         .from("games")
         .update({
           status: "playing", last_animal: animal.name,
           current_required_letter: getLastLetter(animal.name),
-          current_turn_order: 1,
+          current_turn_order: firstTurnOrder,
           turn_started_at: new Date().toISOString()
         })
         .eq("id", state.game.id).select().single();
@@ -473,7 +512,12 @@ function initOnlinePage() {
       )
       .on("postgres_changes",
         { event: "*", schema: "public", table: "game_players", filter: `game_id=eq.${gameId}` },
-        async () => {
+        async (payload) => {
+          // Wenn ich gekickt wurde → zurück zur Lobby-Auswahl
+          if (payload.eventType === "DELETE" && payload.old?.id === state.localPlayer?.id) {
+            handleKickedOut();
+            return;
+          }
           state.players = await loadGamePlayers(gameId);
           render();
         }
@@ -497,17 +541,35 @@ function initOnlinePage() {
         }
       });
 
+    // Fallback IMMER aktivieren (zur Sicherheit), aber langsamer
     setTimeout(() => {
-      if (!state.fallbackTimer && state.realtimeChannel?.state !== "joined") {
+      if (!state.fallbackTimer) {
         startFallbackPolling();
       }
-    }, 3000);
+    }, 2000);
+  }
+
+  function handleKickedOut() {
+    setMessage(el.message, "Du wurdest aus der Lobby entfernt.", "warning");
+    if (state.realtimeChannel) {
+      supabaseClient.removeChannel(state.realtimeChannel);
+      state.realtimeChannel = null;
+    }
+    if (state.countdownTimer) clearInterval(state.countdownTimer);
+    if (state.fallbackTimer) clearInterval(state.fallbackTimer);
+    state.game = null;
+    state.localPlayer = null;
+    state.isHost = false;
+    state.players = [];
+    state.moves = [];
+    el.lobbyTicket.hidden = true;
+    render();
   }
 
   function startFallbackPolling() {
     if (state.fallbackTimer) return;
-    console.log("Realtime nicht verfügbar, nutze Fallback-Polling");
-    state.fallbackTimer = setInterval(refreshLobby, 1000);
+    console.log("Fallback-Polling aktiv");
+    state.fallbackTimer = setInterval(refreshLobby, 1500);
   }
 
   async function refreshLobby() {
@@ -518,30 +580,32 @@ function initOnlinePage() {
         loadGamePlayers(state.game.id),
         loadGameMoves(state.game.id)
       ]);
+
+      // Prüfe ob ich noch in der Lobby bin
+      if (state.localPlayer && !players.some(p => p.id === state.localPlayer.id)) {
+        handleKickedOut();
+        return;
+      }
+
       state.game = game;
       state.players = players;
       state.moves = moves;
       render();
     } catch (error) {
-      setMessage(el.message, error.message, "error");
+      console.error("Refresh-Fehler:", error);
     }
   }
 
-  // NEUE LOGIK: Timer läuft lokal beim aktiven Spieler
-  // Wenn Zeit abläuft → eliminiert sich selbst
   async function checkLocalTimerExpiration() {
     if (!state.game?.timer_enabled || state.game?.status !== "playing") return;
 
     const currentPlayer = getCurrentOnlinePlayer();
     if (!currentPlayer || currentPlayer.is_eliminated) return;
-
-    // Nur der aktive Spieler prüft seinen eigenen Timer
     if (state.localPlayer?.id !== currentPlayer.id) return;
 
     const remaining = getRemainingSeconds();
     if (remaining === null || remaining > 0) return;
 
-    // Zeit abgelaufen - eliminiere mich selbst
     const activePlayers = state.players.filter((p) => !p.is_eliminated);
     if (activePlayers.length <= 1) return;
 
@@ -566,6 +630,7 @@ function initOnlinePage() {
     }
   }
 
+  // FIX: Update sofort lokal anwenden, dann zur DB
   async function handleMove(event) {
     event.preventDefault();
     if (!state.game || !state.localPlayer) { setMessage(el.message, "Du bist in keiner Lobby.", "warning"); return; }
@@ -585,6 +650,8 @@ function initOnlinePage() {
 
     try {
       const nextRequiredLetter = getLastLetter(animalName);
+
+      // 1. Move speichern
       await saveMove({
         gameId: state.game.id, gamePlayerId: state.localPlayer.id,
         guestName: state.guestName, animalName,
@@ -592,10 +659,21 @@ function initOnlinePage() {
         moveNumber: state.moves.length + 1
       });
 
+      // 2. Nächsten Spieler bestimmen
       const nextTurnOrder = getNextActiveTurnOrder(state.players, currentPlayer.turn_order);
-      await updateGameAfterMove(state.game.id, animalName, nextRequiredLetter, nextTurnOrder || currentPlayer.turn_order);
+
+      // 3. Game in DB updaten
+      const updatedGame = await updateGameAfterMove(
+        state.game.id, animalName, nextRequiredLetter,
+        nextTurnOrder || currentPlayer.turn_order
+      );
+
+      // 4. WICHTIG: Lokalen state SOFORT aktualisieren - nicht warten auf Realtime
+      state.game = updatedGame;
+      state.moves = await loadGameMoves(state.game.id);
 
       el.animalInput.value = "";
+      render();
       setMessage(el.message, `${state.guestName} spielt: ${toTitleCase(animalName)}`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
@@ -623,7 +701,6 @@ function initOnlinePage() {
 
   function startCountdownTimer() {
     if (state.countdownTimer) clearInterval(state.countdownTimer);
-    // Timer alle 250ms aktualisieren für flüssige Anzeige
     state.countdownTimer = setInterval(() => {
       renderTimerOnly();
       checkLocalTimerExpiration();
@@ -634,22 +711,18 @@ function initOnlinePage() {
     return state.players.find((p) => p.turn_order === state.game?.current_turn_order) || null;
   }
 
-  // NEUE LOGIK: Timer basiert auf LOKALER Zeit ab dem Moment wo der Spieler den Zug sieht
   function getRemainingSeconds() {
     if (!state.game?.timer_enabled || !state.game?.turn_started_at || state.game?.status !== "playing") {
       return null;
     }
 
-    // Eindeutiger Schlüssel für diesen Zug
     const turnKey = `${state.game.id}-${state.game.current_turn_order}-${state.game.turn_started_at}`;
 
-    // Wenn dieser Zug neu für uns ist → lokalen Startzeitpunkt setzen
     if (state.lastSeenTurnKey !== turnKey) {
       state.lastSeenTurnKey = turnKey;
       state.localTurnStartedAt = Date.now();
     }
 
-    // Berechne Restzeit basierend auf LOKALER Zeit (kein Server/Netzwerk-Lag)
     const elapsed = Math.floor((Date.now() - state.localTurnStartedAt) / 1000);
     return Math.max(0, Number(state.game.turn_seconds || 60) - elapsed);
   }
@@ -692,7 +765,7 @@ function initOnlinePage() {
     if (!state.game) {
       el.turnBadge.textContent = "Keine aktive Lobby";
     } else if (state.game.status === "waiting") {
-      el.turnBadge.textContent = `Lobby wartet · ${state.players.length} Spieler · Host kann starten`;
+      el.turnBadge.textContent = `Lobby wartet · ${state.players.length} Spieler${state.isHost ? " · Du bist Host" : ""}`;
     } else if (state.game.status === "finished") {
       el.turnBadge.textContent = "Spiel beendet";
     } else if (currentPlayer) {
@@ -702,10 +775,10 @@ function initOnlinePage() {
     }
 
     if (startGameButton) {
-      if (state.game?.status === "waiting" && state.players.length >= 2) {
+      if (state.isHost && state.game?.status === "waiting" && state.players.length >= 2) {
         startGameButton.hidden = false;
         startGameButton.textContent = "Spiel starten";
-      } else if (state.game?.status === "finished") {
+      } else if (state.isHost && state.game?.status === "finished") {
         startGameButton.hidden = false;
         startGameButton.textContent = "Erneut spielen";
       } else {
@@ -714,23 +787,39 @@ function initOnlinePage() {
     }
 
     el.playersList.innerHTML = state.players.length
-      ? state.players.map((p) => `
-          <article class="player-row ${p.is_eliminated ? "eliminated" : ""}">
-            <div>
-              <strong>${escapeHtml(p.guest_name)}</strong>
-              <div class="meta">Spieler ${p.turn_order}${p.id === state.localPlayer?.id ? " · Du" : ""}</div>
-            </div>
-            ${
-              p.is_eliminated
-                ? `<span class="pill danger">Raus</span>`
-                : state.game?.status === "waiting"
-                  ? `<span class="pill">Bereit</span>`
-                  : p.turn_order === state.game?.current_turn_order
-                    ? `<span class="pill success">Dran</span>`
-                    : `<span class="pill">Aktiv</span>`
-            }
-          </article>
-        `).join("")
+      ? state.players.map((p) => {
+          const isMe = p.id === state.localPlayer?.id;
+          const canKick = state.isHost && !isMe && state.game?.status === "waiting";
+          return `
+            <article class="player-row ${p.is_eliminated ? "eliminated" : ""}">
+              <div>
+                <strong>${escapeHtml(p.guest_name)}</strong>
+                <div class="meta">
+                  Spieler ${p.turn_order}${isMe ? " · Du" : ""}${p.turn_order === 1 ? " · Host" : ""}
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                ${
+                  p.is_eliminated
+                    ? `<span class="pill danger">Raus</span>`
+                    : state.game?.status === "waiting"
+                      ? `<span class="pill">Bereit</span>`
+                      : p.turn_order === state.game?.current_turn_order
+                        ? `<span class="pill success">Dran</span>`
+                        : `<span class="pill">Aktiv</span>`
+                }
+                ${canKick ? `
+                  <button class="kick-button button ghost"
+                          data-player-id="${p.id}"
+                          data-player-name="${escapeHtml(p.guest_name)}"
+                          style="padding: 4px 10px; font-size: 13px;">
+                    Kick
+                  </button>
+                ` : ""}
+              </div>
+            </article>
+          `;
+        }).join("")
       : `<p class="hint">Noch keine Spieler.</p>`;
 
     el.movesList.innerHTML = state.moves.length
