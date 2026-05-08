@@ -13,7 +13,7 @@ const supabaseClient = window.supabase
 
 const page = document.body.dataset.page;
 
-console.log("Animalchain app.js STRICT v5 geladen");
+console.log("Animalchain app.js v6 geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -39,18 +39,16 @@ async function loadApprovedAnimals() {
     }
 
     if (!data || data.length === 0) break;
-
     allAnimals = allAnimals.concat(data);
-
     if (data.length < pageSize) break;
     from += pageSize;
   }
 
   console.log("Insgesamt aus Supabase geladen:", allAnimals.length, "Tiere");
-
   return mergeAnimals(allAnimals, loadLocalAnimals());
 }
 
+// WICHTIG: createGame setzt status "waiting" und turn_started_at = null
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
   ensureSupabase();
 
@@ -95,68 +93,53 @@ async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
 
 async function findGameByCode(code) {
   ensureSupabase();
-
   const { data, error } = await supabaseClient
     .from("games")
     .select("*")
     .eq("code", normalizeLobbyCode(code))
     .single();
 
-  if (error) {
-    throw new Error("Lobby wurde nicht gefunden.");
-  }
-
+  if (error) throw new Error("Lobby wurde nicht gefunden.");
   return data;
 }
 
 async function loadGameById(gameId) {
   ensureSupabase();
-
   const { data, error } = await supabaseClient
     .from("games")
     .select("*")
     .eq("id", gameId)
     .single();
 
-  if (error) {
-    throw new Error(`Lobby konnte nicht geladen werden: ${error.message}`);
-  }
-
+  if (error) throw new Error(`Lobby konnte nicht geladen werden: ${error.message}`);
   return data;
 }
 
 async function loadGamePlayers(gameId) {
   ensureSupabase();
-
   const { data, error } = await supabaseClient
     .from("game_players")
     .select("*")
     .eq("game_id", gameId)
     .order("turn_order", { ascending: true });
 
-  if (error) {
-    throw new Error(`Spieler konnten nicht geladen werden: ${error.message}`);
-  }
-
+  if (error) throw new Error(`Spieler konnten nicht geladen werden: ${error.message}`);
   return data || [];
 }
 
 async function loadGameMoves(gameId) {
   ensureSupabase();
-
   const { data, error } = await supabaseClient
     .from("moves")
     .select("*")
     .eq("game_id", gameId)
     .order("move_number", { ascending: true });
 
-  if (error) {
-    throw new Error(`Spielzüge konnten nicht geladen werden: ${error.message}`);
-  }
-
+  if (error) throw new Error(`Spielzüge konnten nicht geladen werden: ${error.message}`);
   return data || [];
 }
 
+// WICHTIG: joinGame startet KEIN Spiel mehr - Status bleibt "waiting"!
 async function joinGame(game, guestName) {
   const players = await loadGamePlayers(game.id);
 
@@ -176,24 +159,12 @@ async function joinGame(game, guestName) {
     .select()
     .single();
 
-  if (error) {
-    throw new Error(`Beitritt fehlgeschlagen: ${error.message}`);
-  }
-
-  // KEIN Auto-Start - Status bleibt "waiting" bis Host startet
+  if (error) throw new Error(`Beitritt fehlgeschlagen: ${error.message}`);
   return player;
 }
 
-async function saveMove({
-  gameId,
-  gamePlayerId,
-  guestName,
-  animalName,
-  requiredLetter,
-  moveNumber
-}) {
+async function saveMove({ gameId, gamePlayerId, guestName, animalName, requiredLetter, moveNumber }) {
   ensureSupabase();
-
   const cleanAnimal = cleanAnimalName(animalName);
   const normalizedAnimal = normalizeAnimalName(cleanAnimal);
   const nextRequiredLetter = getLastLetter(normalizedAnimal);
@@ -214,16 +185,12 @@ async function saveMove({
     .select()
     .single();
 
-  if (error) {
-    throw new Error(`Spielzug konnte nicht gespeichert werden: ${error.message}`);
-  }
-
+  if (error) throw new Error(`Spielzug konnte nicht gespeichert werden: ${error.message}`);
   return data;
 }
 
 async function updateGameAfterMove(gameId, animalName, nextRequiredLetter, nextTurnOrder) {
   ensureSupabase();
-
   const { error } = await supabaseClient
     .from("games")
     .update({
@@ -235,30 +202,21 @@ async function updateGameAfterMove(gameId, animalName, nextRequiredLetter, nextT
     })
     .eq("id", gameId);
 
-  if (error) {
-    throw new Error(`Lobby konnte nicht aktualisiert werden: ${error.message}`);
-  }
+  if (error) throw new Error(`Lobby konnte nicht aktualisiert werden: ${error.message}`);
 }
 
 async function eliminatePlayer(playerId) {
   ensureSupabase();
-
   const { error } = await supabaseClient
     .from("game_players")
-    .update({
-      is_eliminated: true,
-      eliminated_at: new Date().toISOString()
-    })
+    .update({ is_eliminated: true, eliminated_at: new Date().toISOString() })
     .eq("id", playerId);
 
-  if (error) {
-    throw new Error(`Spieler konnte nicht eliminiert werden: ${error.message}`);
-  }
+  if (error) throw new Error(`Spieler konnte nicht eliminiert werden: ${error.message}`);
 }
 
 async function updateGameTurn(gameId, nextTurnOrder, status = "playing") {
   ensureSupabase();
-
   const { error } = await supabaseClient
     .from("games")
     .update({
@@ -268,18 +226,11 @@ async function updateGameTurn(gameId, nextTurnOrder, status = "playing") {
     })
     .eq("id", gameId);
 
-  if (error) {
-    throw new Error(`Spielstand konnte nicht aktualisiert werden: ${error.message}`);
-  }
+  if (error) throw new Error(`Spielstand konnte nicht aktualisiert werden: ${error.message}`);
 }
 
 function initPracticePage() {
-  const state = {
-    animals: [],
-    lastAnimal: "Turmfalke",
-    requiredLetter: "e",
-    moves: []
-  };
+  const state = { animals: [], lastAnimal: "Turmfalke", requiredLetter: "e", moves: [] };
 
   const el = mapElements({
     lastAnimal: "#practiceLastAnimal",
@@ -302,73 +253,47 @@ function initPracticePage() {
   async function start() {
     try {
       state.animals = await loadApprovedAnimals();
-
       if (!state.animals.length) {
         setMessage(el.message, "Keine Tiere in Supabase gefunden.", "warning");
         render();
         return;
       }
-
       startNewRound(false);
       setMessage(el.message, `${state.animals.length} Tiere geladen. Du bist dran.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
-
     render();
   }
 
   function startNewRound(showMessage) {
     const animal = randomItem(state.animals) || { name: "Turmfalke" };
-
     state.lastAnimal = animal.name;
     state.requiredLetter = getLastLetter(animal.name);
     state.moves = [];
-
     render();
-
-    if (showMessage) {
-      setMessage(el.message, `Neue Runde. Starttier: ${state.lastAnimal}`, "success");
-    }
+    if (showMessage) setMessage(el.message, `Neue Runde. Starttier: ${state.lastAnimal}`, "success");
   }
 
   async function handleMove(event) {
     event.preventDefault();
-
     const animalName = cleanAnimalName(el.animalInput.value);
     const validation = validatePracticeAnimal(animalName);
-
-    if (!validation.ok) {
-      setMessage(el.message, validation.message, validation.type);
-      return;
-    }
-
+    if (!validation.ok) { setMessage(el.message, validation.message, validation.type); return; }
     addMove("Du", animalName);
     el.animalInput.value = "";
     render();
-
     await sleep(450);
     computerMove();
   }
 
   function computerMove() {
-    const options = availableAnimals(
-      state.animals,
-      state.requiredLetter,
-      state.moves.map((move) => move.animal)
-    );
-
+    const options = availableAnimals(state.animals, state.requiredLetter, state.moves.map((m) => m.animal));
     if (!options.length) {
-      setMessage(
-        el.message,
-        `Der Computer findet kein Tier mit ${state.requiredLetter.toUpperCase()}. Du gewinnst!`,
-        "success"
-      );
+      setMessage(el.message, `Der Computer findet kein Tier mit ${state.requiredLetter.toUpperCase()}. Du gewinnst!`, "success");
       return;
     }
-
     const animal = randomItem(options);
-
     addMove("Computer", animal.name);
     render();
     setMessage(el.message, `Computer spielt: ${animal.name}. Jetzt brauchst du ${state.requiredLetter.toUpperCase()}.`, "success");
@@ -376,64 +301,28 @@ function initPracticePage() {
 
   function validatePracticeAnimal(animalName) {
     const normalized = normalizeAnimalName(animalName);
-
-    if (!animalName) {
-      return {
-        ok: false,
-        type: "warning",
-        message: "Bitte gib ein Tier ein."
-      };
-    }
-
-    if (getFirstLetter(normalized) !== state.requiredLetter) {
-      return {
-        ok: false,
-        type: "error",
-        message: `Dein Tier muss mit ${state.requiredLetter.toUpperCase()} anfangen.`
-      };
-    }
-
-    if (!findAnimal(state.animals, animalName)) {
-      return {
-        ok: false,
-        type: "error",
-        message: `"${animalName}" ist nicht in deiner Tierliste.`
-      };
-    }
-
-    if (state.moves.some((move) => normalizeAnimalName(move.animal) === normalized)) {
-      return {
-        ok: false,
-        type: "error",
-        message: `"${animalName}" wurde schon gespielt.`
-      };
-    }
-
+    if (!animalName) return { ok: false, type: "warning", message: "Bitte gib ein Tier ein." };
+    if (getFirstLetter(normalized) !== state.requiredLetter)
+      return { ok: false, type: "error", message: `Dein Tier muss mit ${state.requiredLetter.toUpperCase()} anfangen.` };
+    if (!findAnimal(state.animals, animalName))
+      return { ok: false, type: "error", message: `"${animalName}" ist nicht in deiner Tierliste.` };
+    if (state.moves.some((m) => normalizeAnimalName(m.animal) === normalized))
+      return { ok: false, type: "error", message: `"${animalName}" wurde schon gespielt.` };
     return { ok: true };
   }
 
   function addMove(playerName, animalName) {
-    state.moves.push({
-      playerName,
-      animal: toTitleCase(animalName)
-    });
-
+    state.moves.push({ playerName, animal: toTitleCase(animalName) });
     state.lastAnimal = toTitleCase(animalName);
     state.requiredLetter = getLastLetter(animalName);
   }
 
   function showHint() {
-    const options = availableAnimals(
-      state.animals,
-      state.requiredLetter,
-      state.moves.map((move) => move.animal)
-    );
-
+    const options = availableAnimals(state.animals, state.requiredLetter, state.moves.map((m) => m.animal));
     if (!options.length) {
       setMessage(el.message, `Kein Tipp für ${state.requiredLetter.toUpperCase()} gefunden.`, "warning");
       return;
     }
-
     setMessage(el.message, `Tipp: ${randomItem(options).name}`, "success");
   }
 
@@ -441,20 +330,9 @@ function initPracticePage() {
     el.lastAnimal.textContent = state.lastAnimal || "---";
     el.requiredLetter.textContent = state.requiredLetter ? state.requiredLetter.toUpperCase() : "---";
     el.moveCount.textContent = String(state.moves.length);
-
     el.movesList.innerHTML = state.moves.length
-      ? state.moves.map((move) => `
-          <li>
-            <strong>${escapeHtml(move.animal)}</strong>
-            <span class="hint">von ${escapeHtml(move.playerName)}</span>
-          </li>
-        `).join("")
-      : `
-          <li>
-            <strong>${escapeHtml(state.lastAnimal)}</strong>
-            <span class="hint">Starttier</span>
-          </li>
-        `;
+      ? state.moves.map((m) => `<li><strong>${escapeHtml(m.animal)}</strong><span class="hint">von ${escapeHtml(m.playerName)}</span></li>`).join("")
+      : `<li><strong>${escapeHtml(state.lastAnimal)}</strong><span class="hint">Starttier</span></li>`;
   }
 }
 
@@ -467,7 +345,8 @@ function initOnlinePage() {
     players: [],
     moves: [],
     refreshTimer: null,
-    countdownTimer: null
+    countdownTimer: null,
+    isRefreshing: false  // Flag um doppelte Refreshes zu verhindern
   };
 
   const el = mapElements({
@@ -507,9 +386,7 @@ function initOnlinePage() {
   el.refreshButton.addEventListener("click", refreshLobby);
   el.newRoundButton.addEventListener("click", newRound);
 
-  if (startGameButton) {
-    startGameButton.addEventListener("click", handleStartGame);
-  }
+  if (startGameButton) startGameButton.addEventListener("click", handleStartGame);
 
   if (localAnimalForm && localAnimalInput && localAnimalMessage) {
     localAnimalForm.addEventListener("submit", handleAddLocalAnimal);
@@ -524,42 +401,28 @@ function initOnlinePage() {
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
-
     render();
   }
 
   function handleName(event) {
     event.preventDefault();
-
     state.guestName = cleanPlayerName(el.guestName.value) || "Gast";
     setMessage(el.message, `Name gesetzt: ${state.guestName}`, "success");
   }
 
   function handleAddLocalAnimal(event) {
     event.preventDefault();
-
     try {
       const animalName = cleanAnimalName(localAnimalInput.value);
       const normalized = normalizeAnimalName(animalName);
-
-      if (!animalName) {
-        localAnimalMessage.textContent = "Bitte gib ein Tier ein.";
-        return;
-      }
-
-      if (normalized.length < 3) {
-        localAnimalMessage.textContent = "Der Tiername ist zu kurz.";
-        return;
-      }
-
+      if (!animalName) { localAnimalMessage.textContent = "Bitte gib ein Tier ein."; return; }
+      if (normalized.length < 3) { localAnimalMessage.textContent = "Der Tiername ist zu kurz."; return; }
       if (!/^[a-zäöüßA-ZÄÖÜ\s-]+$/.test(animalName)) {
         localAnimalMessage.textContent = "Bitte nur Buchstaben, Leerzeichen oder Bindestrich verwenden.";
         return;
       }
-
       const localAnimal = addLocalAnimal(animalName);
       state.animals = mergeAnimals(state.animals, [localAnimal]);
-
       localAnimalInput.value = "";
       localAnimalMessage.textContent = `"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`;
       setMessage(el.message, `"${toTitleCase(animalName)}" ist jetzt lokal spielbar.`, "success");
@@ -571,7 +434,6 @@ function initOnlinePage() {
   async function handleCreateLobby() {
     try {
       const code = generateLobbyCode();
-
       const { game, player } = await createGame({
         code,
         guestName: state.guestName,
@@ -581,14 +443,12 @@ function initOnlinePage() {
 
       state.game = game;
       state.localPlayer = player;
-
       el.lobbyTicket.hidden = false;
       el.lobbyCode.textContent = code;
 
       startAutoRefresh();
       await refreshLobby();
-
-      setMessage(el.message, `Lobby ${code} erstellt. Warte auf Spieler und drücke "Spiel starten".`, "success");
+      setMessage(el.message, `Lobby ${code} erstellt. Drücke "Spiel starten" wenn alle bereit sind.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
@@ -596,20 +456,17 @@ function initOnlinePage() {
 
   async function handleJoinLobby(event) {
     event.preventDefault();
-
     try {
       const game = await findGameByCode(el.joinCode.value);
       const player = await joinGame(game, state.guestName);
 
       state.game = game;
       state.localPlayer = player;
-
       el.lobbyTicket.hidden = false;
       el.lobbyCode.textContent = game.code;
 
       startAutoRefresh();
       await refreshLobby();
-
       setMessage(el.message, `Du bist Lobby ${game.code} beigetreten. Warte bis der Host startet.`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
@@ -617,51 +474,37 @@ function initOnlinePage() {
   }
 
   async function handleStartGame() {
-    if (!state.game?.id) {
-      setMessage(el.message, "Du bist in keiner Lobby.", "warning");
-      return;
-    }
-
-    if (state.players.length < 2) {
-      setMessage(el.message, "Du brauchst mindestens 2 Spieler zum Starten.", "warning");
-      return;
-    }
-
+    if (!state.game?.id) { setMessage(el.message, "Du bist in keiner Lobby.", "warning"); return; }
+    if (state.players.length < 2) { setMessage(el.message, "Du brauchst mindestens 2 Spieler zum Starten.", "warning"); return; }
     await startNewGameRound("Spiel gestartet!");
   }
 
-  // Zentrale Funktion für neue Runde - löscht alte Moves komplett
   async function startNewGameRound(successPrefix) {
     try {
-      // 1. Reaktiviere alle ausgeschiedenen Spieler
-      const { error: playersError } = await supabaseClient
+      // 1. Reaktiviere alle Spieler
+      await supabaseClient
         .from("game_players")
         .update({ is_eliminated: false, eliminated_at: null })
         .eq("game_id", state.game.id);
 
-      if (playersError) {
-        console.error("Fehler beim Reaktivieren:", playersError);
-      }
-
-      // 2. WICHTIG: Lösche ALLE alten Moves - mit Verifikation
+      // 2. Lösche ALLE alten Moves
       const { error: deleteError } = await supabaseClient
         .from("moves")
         .delete()
         .eq("game_id", state.game.id);
 
       if (deleteError) {
-        console.error("Fehler beim Löschen alter Moves:", deleteError);
         throw new Error("Alte Tiere konnten nicht gelöscht werden: " + deleteError.message);
       }
 
-      // 3. Lokalen State sofort leeren - keine Verzögerung
+      // 3. Lokalen State sofort leeren
       state.moves = [];
 
-      // 4. Wähle zufälliges Starttier
+      // 4. Wähle Starttier
       const animal = randomItem(state.animals) || { name: "Turmfalke" };
 
-      // 5. Update game state
-      const { error: gameError } = await supabaseClient
+      // 5. Update game in DB
+      const { data: updatedGame, error: gameError } = await supabaseClient
         .from("games")
         .update({
           status: "playing",
@@ -670,14 +513,18 @@ function initOnlinePage() {
           current_turn_order: 1,
           turn_started_at: new Date().toISOString()
         })
-        .eq("id", state.game.id);
+        .eq("id", state.game.id)
+        .select()
+        .single();
 
-      if (gameError) {
-        throw new Error(gameError.message);
-      }
+      if (gameError) throw new Error(gameError.message);
 
-      // 6. Reload alles frisch
-      await refreshLobby();
+      // 6. Sofort lokalen state.game updaten (kein Warten auf refresh)
+      state.game = updatedGame;
+
+      // 7. Render sofort
+      render();
+
       setMessage(el.message, `${successPrefix} Starttier: ${animal.name}`, "success");
     } catch (error) {
       setMessage(el.message, error.message, "error");
@@ -685,10 +532,7 @@ function initOnlinePage() {
   }
 
   async function copyLobbyCode() {
-    if (!state.game?.code) {
-      return;
-    }
-
+    if (!state.game?.code) return;
     try {
       await navigator.clipboard.writeText(state.game.code);
       setMessage(el.message, "Lobby-Code kopiert.", "success");
@@ -697,17 +541,24 @@ function initOnlinePage() {
     }
   }
 
+  // FIX: refreshLobby mit Lock damit nicht doppelt läuft
   async function refreshLobby() {
-    if (!state.game?.id) {
-      return;
-    }
+    if (!state.game?.id) return;
+    if (state.isRefreshing) return;  // Verhindert parallele Refreshes
+
+    state.isRefreshing = true;
 
     try {
-      state.game = await loadGameById(state.game.id);
-      state.players = await loadGamePlayers(state.game.id);
-      state.moves = await loadGameMoves(state.game.id);
+      const [game, players, moves] = await Promise.all([
+        loadGameById(state.game.id),
+        loadGamePlayers(state.game.id),
+        loadGameMoves(state.game.id)
+      ]);
 
-      // Timer nur prüfen wenn das Spiel auch läuft
+      state.game = game;
+      state.players = players;
+      state.moves = moves;
+
       if (state.game.timer_enabled && state.game.status === "playing") {
         await checkTimerExpiration();
       }
@@ -715,27 +566,23 @@ function initOnlinePage() {
       render();
     } catch (error) {
       setMessage(el.message, error.message, "error");
+    } finally {
+      state.isRefreshing = false;
     }
   }
 
   async function checkTimerExpiration() {
     const currentPlayer = getCurrentOnlinePlayer();
-    const activePlayers = state.players.filter((player) => !player.is_eliminated);
+    const activePlayers = state.players.filter((p) => !p.is_eliminated);
 
-    if (!currentPlayer || activePlayers.length <= 1 || !state.game.turn_started_at || getRemainingSeconds() > 0) {
-      return;
-    }
+    if (!currentPlayer || activePlayers.length <= 1 || !state.game.turn_started_at || getRemainingSeconds() > 0) return;
 
     await eliminatePlayer(currentPlayer.id);
-
-    const updatedPlayers = state.players.map((player) => {
-      return player.id === currentPlayer.id
-        ? { ...player, is_eliminated: true }
-        : player;
-    });
-
+    const updatedPlayers = state.players.map((p) =>
+      p.id === currentPlayer.id ? { ...p, is_eliminated: true } : p
+    );
     const nextTurnOrder = getNextActiveTurnOrder(updatedPlayers, currentPlayer.turn_order);
-    const remainingPlayers = updatedPlayers.filter((player) => !player.is_eliminated);
+    const remainingPlayers = updatedPlayers.filter((p) => !p.is_eliminated);
 
     await updateGameTurn(
       state.game.id,
@@ -749,40 +596,23 @@ function initOnlinePage() {
 
   async function handleMove(event) {
     event.preventDefault();
-
-    if (!state.game || !state.localPlayer) {
-      setMessage(el.message, "Du bist in keiner Lobby.", "warning");
-      return;
-    }
-
-    if (state.game.status !== "playing") {
-      setMessage(el.message, "Das Spiel hat noch nicht gestartet.", "warning");
-      return;
-    }
+    if (!state.game || !state.localPlayer) { setMessage(el.message, "Du bist in keiner Lobby.", "warning"); return; }
+    if (state.game.status !== "playing") { setMessage(el.message, "Das Spiel hat noch nicht gestartet.", "warning"); return; }
 
     const currentPlayer = getCurrentOnlinePlayer();
-
     if (!currentPlayer || currentPlayer.id !== state.localPlayer.id) {
-      setMessage(el.message, "Du bist gerade nicht dran.", "warning");
-      return;
+      setMessage(el.message, "Du bist gerade nicht dran.", "warning"); return;
     }
-
     if (currentPlayer.is_eliminated) {
-      setMessage(el.message, "Du bist ausgeschieden und kannst nur noch zuschauen.", "warning");
-      return;
+      setMessage(el.message, "Du bist ausgeschieden und kannst nur noch zuschauen.", "warning"); return;
     }
 
     const animalName = cleanAnimalName(el.animalInput.value);
     const validation = validateOnlineAnimal(animalName);
-
-    if (!validation.ok) {
-      setMessage(el.message, validation.message, validation.type);
-      return;
-    }
+    if (!validation.ok) { setMessage(el.message, validation.message, validation.type); return; }
 
     try {
       const nextRequiredLetter = getLastLetter(animalName);
-
       await saveMove({
         gameId: state.game.id,
         gamePlayerId: state.localPlayer.id,
@@ -793,16 +623,9 @@ function initOnlinePage() {
       });
 
       const nextTurnOrder = getNextActiveTurnOrder(state.players, currentPlayer.turn_order);
-
-      await updateGameAfterMove(
-        state.game.id,
-        animalName,
-        nextRequiredLetter,
-        nextTurnOrder || currentPlayer.turn_order
-      );
+      await updateGameAfterMove(state.game.id, animalName, nextRequiredLetter, nextTurnOrder || currentPlayer.turn_order);
 
       el.animalInput.value = "";
-
       await refreshLobby();
       setMessage(el.message, `${state.guestName} spielt: ${toTitleCase(animalName)}`, "success");
     } catch (error) {
@@ -813,124 +636,90 @@ function initOnlinePage() {
   function validateOnlineAnimal(animalName) {
     const normalized = normalizeAnimalName(animalName);
     const needed = String(state.game?.current_required_letter || "e").toLowerCase();
-
-    if (!animalName) {
-      return {
-        ok: false,
-        type: "warning",
-        message: "Bitte gib ein Tier ein."
-      };
-    }
-
-    if (getFirstLetter(normalized) !== needed) {
-      return {
-        ok: false,
-        type: "error",
-        message: `Das Tier muss mit ${needed.toUpperCase()} anfangen.`
-      };
-    }
-
-    if (!findAnimal(state.animals, animalName)) {
-      return {
-        ok: false,
-        type: "error",
-        message: `"${animalName}" ist nicht in deiner Tierliste.`
-      };
-    }
-
-    if (state.moves.some((move) => move.normalized_animal_name === normalized)) {
-      return {
-        ok: false,
-        type: "error",
-        message: `"${animalName}" wurde schon gespielt.`
-      };
-    }
-
+    if (!animalName) return { ok: false, type: "warning", message: "Bitte gib ein Tier ein." };
+    if (getFirstLetter(normalized) !== needed)
+      return { ok: false, type: "error", message: `Das Tier muss mit ${needed.toUpperCase()} anfangen.` };
+    if (!findAnimal(state.animals, animalName))
+      return { ok: false, type: "error", message: `"${animalName}" ist nicht in deiner Tierliste.` };
+    if (state.moves.some((m) => m.normalized_animal_name === normalized))
+      return { ok: false, type: "error", message: `"${animalName}" wurde schon gespielt.` };
     return { ok: true };
   }
 
   async function newRound() {
-    if (!state.game?.id) {
-      setMessage(el.message, "Du bist in keiner Lobby.", "warning");
-      return;
-    }
-
-    if (state.players.length < 2) {
-      setMessage(el.message, "Du brauchst mindestens 2 Spieler.", "warning");
-      return;
-    }
-
+    if (!state.game?.id) { setMessage(el.message, "Du bist in keiner Lobby.", "warning"); return; }
+    if (state.players.length < 2) { setMessage(el.message, "Du brauchst mindestens 2 Spieler.", "warning"); return; }
     await startNewGameRound("Neue Runde gestartet.");
   }
 
   function startAutoRefresh() {
-    if (state.refreshTimer) {
-      clearInterval(state.refreshTimer);
-    }
+    if (state.refreshTimer) clearInterval(state.refreshTimer);
+    if (state.countdownTimer) clearInterval(state.countdownTimer);
 
-    if (state.countdownTimer) {
-      clearInterval(state.countdownTimer);
-    }
-
-    state.refreshTimer = setInterval(refreshLobby, 2500);
-    state.countdownTimer = setInterval(renderTimerOnly, 500);
+    // Schnelleres Refresh für weniger Verzögerung
+    state.refreshTimer = setInterval(refreshLobby, 1500);
+    // Timer-Anzeige öfters updaten für flüssigere Sekunden-Anzeige
+    state.countdownTimer = setInterval(renderTimerOnly, 250);
   }
 
   function getCurrentOnlinePlayer() {
-    return state.players.find((player) => player.turn_order === state.game?.current_turn_order) || null;
+    return state.players.find((p) => p.turn_order === state.game?.current_turn_order) || null;
   }
 
   function getRemainingSeconds() {
     if (!state.game?.timer_enabled || !state.game?.turn_started_at || state.game?.status !== "playing") {
       return null;
     }
-
     const elapsed = Math.floor((Date.now() - new Date(state.game.turn_started_at).getTime()) / 1000);
-
     return Math.max(0, Number(state.game.turn_seconds || 60) - elapsed);
   }
 
-  // STABILE Timer-Anzeige - kein Flackern zwischen "Aus" und "Wartend"
+  // KOMPLETT NEU: Stabile Timer-Anzeige
   function getTimerDisplayText() {
     if (!state.game) return "—";
+
+    // Wenn Timer ausgeschaltet → IMMER "Aus"
     if (!state.game.timer_enabled) return "Aus";
 
-    if (state.game.status === "waiting") return "Wartend";
-    if (state.game.status === "finished") return "Beendet";
-    if (state.game.status === "playing") {
+    // Status entscheidet was angezeigt wird
+    const status = state.game.status;
+
+    if (status === "waiting") return "Wartend";
+    if (status === "finished") return "Beendet";
+
+    if (status === "playing") {
       const remaining = getRemainingSeconds();
-      if (remaining === null) return "—";
+      if (remaining === null) return "Wartend";
       return formatTimer(remaining);
     }
+
     return "—";
   }
 
+  // Timer-Anzeige ohne Flackern
+  let lastTimerText = "";
   function renderTimerOnly() {
-    if (state.game) {
-      const newText = getTimerDisplayText();
-      // Nur ändern wenn sich was geändert hat - reduziert Flackern
-      if (el.timerDisplay.textContent !== newText) {
-        el.timerDisplay.textContent = newText;
-      }
+    if (!state.game) return;
+    const newText = getTimerDisplayText();
+    if (newText !== lastTimerText) {
+      el.timerDisplay.textContent = newText;
+      lastTimerText = newText;
     }
   }
 
   function render() {
     const currentPlayer = getCurrentOnlinePlayer();
-    const activePlayers = state.players.filter((player) => !player.is_eliminated);
+    const activePlayers = state.players.filter((p) => !p.is_eliminated);
 
     el.lastAnimal.textContent = state.game?.last_animal || "---";
     el.requiredLetter.textContent = state.game?.current_required_letter
       ? state.game.current_required_letter.toUpperCase()
       : "---";
 
-    // Stabile Timer-Anzeige
-    const newTimerText = getTimerDisplayText();
-    if (el.timerDisplay.textContent !== newTimerText) {
-      el.timerDisplay.textContent = newTimerText;
-    }
+    // Timer-Update via gleicher Funktion
+    renderTimerOnly();
 
-    // Status-Anzeige im turnBadge
+    // Status-Anzeige
     if (!state.game) {
       el.turnBadge.textContent = "Keine aktive Lobby";
     } else if (state.game.status === "waiting") {
@@ -943,7 +732,7 @@ function initOnlinePage() {
       el.turnBadge.textContent = "Warte...";
     }
 
-    // Zeige/Verstecke Start-Button basierend auf Status
+    // Start-Button
     if (startGameButton) {
       if (state.game?.status === "waiting" && state.players.length >= 2) {
         startGameButton.hidden = false;
@@ -957,20 +746,18 @@ function initOnlinePage() {
     }
 
     el.playersList.innerHTML = state.players.length
-      ? state.players.map((player) => `
-          <article class="player-row ${player.is_eliminated ? "eliminated" : ""}">
+      ? state.players.map((p) => `
+          <article class="player-row ${p.is_eliminated ? "eliminated" : ""}">
             <div>
-              <strong>${escapeHtml(player.guest_name)}</strong>
-              <div class="meta">
-                Spieler ${player.turn_order}${player.id === state.localPlayer?.id ? " · Du" : ""}
-              </div>
+              <strong>${escapeHtml(p.guest_name)}</strong>
+              <div class="meta">Spieler ${p.turn_order}${p.id === state.localPlayer?.id ? " · Du" : ""}</div>
             </div>
             ${
-              player.is_eliminated
+              p.is_eliminated
                 ? `<span class="pill danger">Raus</span>`
                 : state.game?.status === "waiting"
                   ? `<span class="pill">Bereit</span>`
-                  : player.turn_order === state.game?.current_turn_order
+                  : p.turn_order === state.game?.current_turn_order
                     ? `<span class="pill success">Dran</span>`
                     : `<span class="pill">Aktiv</span>`
             }
@@ -979,40 +766,26 @@ function initOnlinePage() {
       : `<p class="hint">Noch keine Spieler.</p>`;
 
     el.movesList.innerHTML = state.moves.length
-      ? state.moves.map((move) => `
+      ? state.moves.map((m) => `
           <li>
-            <strong>${escapeHtml(move.animal_name)}</strong>
-            <span class="hint">von ${escapeHtml(move.guest_name || "Gast")}</span>
+            <strong>${escapeHtml(m.animal_name)}</strong>
+            <span class="hint">von ${escapeHtml(m.guest_name || "Gast")}</span>
           </li>
         `).join("")
-      : `
-          <li>
-            <strong>${escapeHtml(state.game?.last_animal || "Turmfalke")}</strong>
-            <span class="hint">Starttier</span>
-          </li>
-        `;
+      : `<li><strong>${escapeHtml(state.game?.last_animal || "Turmfalke")}</strong><span class="hint">Starttier</span></li>`;
 
     if (state.game?.status === "playing" && activePlayers.length === 1 && state.players.length > 1) {
       setMessage(el.message, `${activePlayers[0].guest_name} gewinnt! Drücke "Neue Runde" um nochmal zu spielen.`, "success");
-
-      // Spiel als finished markieren
-      supabaseClient
-        .from("games")
-        .update({ status: "finished" })
-        .eq("id", state.game.id);
+      supabaseClient.from("games").update({ status: "finished" }).eq("id", state.game.id);
     }
   }
 }
 
 function initLocalPage() {
   const state = {
-    animals: [],
-    players: [],
-    moves: [],
-    lastAnimal: "Turmfalke",
-    requiredLetter: "e",
-    turnIndex: 0,
-    started: false
+    animals: [], players: [], moves: [],
+    lastAnimal: "Turmfalke", requiredLetter: "e",
+    turnIndex: 0, started: false
   };
 
   const el = mapElements({
@@ -1033,7 +806,6 @@ function initLocalPage() {
   el.playerForm.addEventListener("submit", addPlayer);
   el.startButton.addEventListener("click", startRound);
   el.moveForm.addEventListener("submit", handleMove);
-
   start();
 
   async function start() {
@@ -1043,131 +815,64 @@ function initLocalPage() {
     } catch (error) {
       setMessage(el.message, error.message, "error");
     }
-
     render();
   }
 
   function addPlayer(event) {
     event.preventDefault();
-
     const name = cleanPlayerName(el.playerName.value);
-
-    if (!name) {
-      setMessage(el.message, "Bitte gib einen Spielernamen ein.", "warning");
-      return;
-    }
-
-    state.players.push({
-      id: crypto.randomUUID(),
-      name
-    });
-
+    if (!name) { setMessage(el.message, "Bitte gib einen Spielernamen ein.", "warning"); return; }
+    state.players.push({ id: crypto.randomUUID(), name });
     el.playerName.value = "";
     render();
   }
 
   function startRound() {
-    if (state.players.length < 2) {
-      setMessage(el.message, "Du brauchst mindestens 2 Spieler.", "warning");
-      return;
-    }
-
+    if (state.players.length < 2) { setMessage(el.message, "Du brauchst mindestens 2 Spieler.", "warning"); return; }
     const animal = randomItem(state.animals) || { name: "Turmfalke" };
-
     state.lastAnimal = animal.name;
     state.requiredLetter = getLastLetter(animal.name);
     state.moves = [];
     state.turnIndex = 0;
     state.started = true;
-
     setMessage(el.message, `Runde gestartet. Starttier: ${animal.name}`, "success");
     render();
   }
 
   function handleMove(event) {
     event.preventDefault();
-
-    if (!state.started) {
-      setMessage(el.message, "Starte zuerst eine Runde.", "warning");
-      return;
-    }
-
+    if (!state.started) { setMessage(el.message, "Starte zuerst eine Runde.", "warning"); return; }
     const animalName = cleanAnimalName(el.animalInput.value);
     const validation = validateLocalAnimal(animalName);
-
-    if (!validation.ok) {
-      setMessage(el.message, validation.message, validation.type);
-      return;
-    }
-
+    if (!validation.ok) { setMessage(el.message, validation.message, validation.type); return; }
     const player = state.players[state.turnIndex];
-
-    state.moves.push({
-      playerName: player.name,
-      animal: toTitleCase(animalName)
-    });
-
+    state.moves.push({ playerName: player.name, animal: toTitleCase(animalName) });
     state.lastAnimal = toTitleCase(animalName);
     state.requiredLetter = getLastLetter(animalName);
     state.turnIndex = (state.turnIndex + 1) % state.players.length;
-
     el.animalInput.value = "";
-
     setMessage(el.message, `${player.name} spielt ${toTitleCase(animalName)}.`, "success");
     render();
   }
 
   function validateLocalAnimal(animalName) {
     const normalized = normalizeAnimalName(animalName);
-
-    if (!animalName) {
-      return {
-        ok: false,
-        type: "warning",
-        message: "Bitte gib ein Tier ein."
-      };
-    }
-
-    if (getFirstLetter(normalized) !== state.requiredLetter) {
-      return {
-        ok: false,
-        type: "error",
-        message: `Das Tier muss mit ${state.requiredLetter.toUpperCase()} anfangen.`
-      };
-    }
-
-    if (!findAnimal(state.animals, animalName)) {
-      return {
-        ok: false,
-        type: "error",
-        message: `"${animalName}" ist nicht in deiner Tierliste.`
-      };
-    }
-
-    if (state.moves.some((move) => normalizeAnimalName(move.animal) === normalized)) {
-      return {
-        ok: false,
-        type: "error",
-        message: `"${animalName}" wurde schon gespielt.`
-      };
-    }
-
+    if (!animalName) return { ok: false, type: "warning", message: "Bitte gib ein Tier ein." };
+    if (getFirstLetter(normalized) !== state.requiredLetter)
+      return { ok: false, type: "error", message: `Das Tier muss mit ${state.requiredLetter.toUpperCase()} anfangen.` };
+    if (!findAnimal(state.animals, animalName))
+      return { ok: false, type: "error", message: `"${animalName}" ist nicht in deiner Tierliste.` };
+    if (state.moves.some((m) => normalizeAnimalName(m.animal) === normalized))
+      return { ok: false, type: "error", message: `"${animalName}" wurde schon gespielt.` };
     return { ok: true };
   }
 
   function render() {
     el.playersList.innerHTML = state.players.length
-      ? state.players.map((player, index) => `
+      ? state.players.map((p, i) => `
           <article class="player-row">
-            <div>
-              <strong>${escapeHtml(player.name)}</strong>
-              <div class="meta">Spieler ${index + 1}</div>
-            </div>
-            ${
-              state.started && index === state.turnIndex
-                ? `<span class="pill success">Dran</span>`
-                : `<span class="pill">Dabei</span>`
-            }
+            <div><strong>${escapeHtml(p.name)}</strong><div class="meta">Spieler ${i + 1}</div></div>
+            ${state.started && i === state.turnIndex ? `<span class="pill success">Dran</span>` : `<span class="pill">Dabei</span>`}
           </article>
         `).join("")
       : `<p class="hint">Noch keine Spieler.</p>`;
@@ -1178,18 +883,8 @@ function initLocalPage() {
     el.turnBadge.textContent = state.started ? `${state.players[state.turnIndex].name} ist dran` : "Noch keine Runde";
 
     el.movesList.innerHTML = state.moves.length
-      ? state.moves.map((move) => `
-          <li>
-            <strong>${escapeHtml(move.animal)}</strong>
-            <span class="hint">von ${escapeHtml(move.playerName)}</span>
-          </li>
-        `).join("")
-      : `
-          <li>
-            <strong>${escapeHtml(state.lastAnimal)}</strong>
-            <span class="hint">Starttier</span>
-          </li>
-        `;
+      ? state.moves.map((m) => `<li><strong>${escapeHtml(m.animal)}</strong><span class="hint">von ${escapeHtml(m.playerName)}</span></li>`).join("")
+      : `<li><strong>${escapeHtml(state.lastAnimal)}</strong><span class="hint">Starttier</span></li>`;
   }
 }
 
@@ -1197,19 +892,14 @@ function loadLocalAnimals() {
   try {
     const animals = JSON.parse(localStorage.getItem(LOCAL_ANIMALS_KEY));
     return Array.isArray(animals) ? animals : [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
-function saveLocalAnimals(animals) {
-  localStorage.setItem(LOCAL_ANIMALS_KEY, JSON.stringify(animals));
-}
+function saveLocalAnimals(animals) { localStorage.setItem(LOCAL_ANIMALS_KEY, JSON.stringify(animals)); }
 
 function createLocalAnimal(name) {
   const cleanName = cleanAnimalName(name);
   const normalizedName = normalizeAnimalName(cleanName);
-
   return {
     id: `local-${normalizedName}`,
     name: toTitleCase(cleanName),
@@ -1223,31 +913,23 @@ function createLocalAnimal(name) {
 
 function addLocalAnimal(name) {
   const animal = createLocalAnimal(name);
-
   if (!animal.normalized_name || !animal.first_letter || !animal.last_letter) {
     throw new Error("Dieses Tier kann nicht lokal gespeichert werden.");
   }
-
   const localAnimals = loadLocalAnimals();
-  const exists = localAnimals.some((item) => item.normalized_name === animal.normalized_name);
-
-  if (!exists) {
+  if (!localAnimals.some((item) => item.normalized_name === animal.normalized_name)) {
     localAnimals.push(animal);
     saveLocalAnimals(localAnimals);
   }
-
   return animal;
 }
 
 function mergeAnimals(databaseAnimals, localAnimals) {
   const animalsByName = new Map();
-
   [...databaseAnimals, ...localAnimals].forEach((animal) => {
     if (!animal) return;
-
     const normalized = animal.normalized_name || normalizeAnimalName(animal.name);
     if (!normalized) return;
-
     animalsByName.set(normalized, {
       ...animal,
       normalized_name: normalized,
@@ -1255,43 +937,30 @@ function mergeAnimals(databaseAnimals, localAnimals) {
       last_letter: animal.last_letter || getLastLetter(animal.name)
     });
   });
-
   return [...animalsByName.values()].sort((a, b) => a.name.localeCompare(b.name, "de"));
 }
 
 function ensureSupabase() {
-  if (!supabaseClient) {
-    throw new Error("Supabase konnte nicht geladen werden.");
-  }
-
+  if (!supabaseClient) throw new Error("Supabase konnte nicht geladen werden.");
   if (!ANIMALCHAIN_CONFIG.supabaseKey || ANIMALCHAIN_CONFIG.supabaseKey.includes("DEIN_PUBLIC")) {
     throw new Error("Bitte trage deinen Supabase Public/Publishable Key in js/app.js ein.");
   }
 }
 
 function mapElements(selectors) {
-  return Object.fromEntries(
-    Object.entries(selectors).map(([key, selector]) => [key, qs(selector)])
-  );
+  return Object.fromEntries(Object.entries(selectors).map(([key, selector]) => [key, qs(selector)]));
 }
 
 function qs(selector) {
   const element = document.querySelector(selector);
-
-  if (!element) {
-    throw new Error(`Element fehlt: ${selector}`);
-  }
-
+  if (!element) throw new Error(`Element fehlt: ${selector}`);
   return element;
 }
 
-function optionalQs(selector) {
-  return document.querySelector(selector);
-}
+function optionalQs(selector) { return document.querySelector(selector); }
 
 function findAnimal(animals, animalName) {
   const normalized = normalizeAnimalName(animalName);
-
   return animals.some((animal) => {
     if (!animal) return false;
     const animalNormalized = animal.normalized_name || normalizeAnimalName(animal.name);
@@ -1302,7 +971,6 @@ function findAnimal(animals, animalName) {
 function availableAnimals(animals, firstLetter, usedNames = []) {
   const used = new Set(usedNames.map(normalizeAnimalName));
   const letter = String(firstLetter || "").toLowerCase();
-
   return animals.filter((animal) => {
     const animalFirst = animal.first_letter || getFirstLetter(animal.name);
     const animalNormalized = animal.normalized_name || normalizeAnimalName(animal.name);
@@ -1311,37 +979,18 @@ function availableAnimals(animals, firstLetter, usedNames = []) {
 }
 
 function getNextActiveTurnOrder(players, currentTurnOrder) {
-  const activePlayers = players
-    .filter((player) => !player.is_eliminated)
-    .sort((a, b) => a.turn_order - b.turn_order);
-
-  if (!activePlayers.length) {
-    return null;
-  }
-
-  return (activePlayers.find((player) => player.turn_order > currentTurnOrder) || activePlayers[0]).turn_order;
+  const activePlayers = players.filter((p) => !p.is_eliminated).sort((a, b) => a.turn_order - b.turn_order);
+  if (!activePlayers.length) return null;
+  return (activePlayers.find((p) => p.turn_order > currentTurnOrder) || activePlayers[0]).turn_order;
 }
 
 function firstActiveTurnOrder(players) {
-  const activePlayers = players
-    .filter((player) => !player.is_eliminated)
-    .sort((a, b) => a.turn_order - b.turn_order);
-
+  const activePlayers = players.filter((p) => !p.is_eliminated).sort((a, b) => a.turn_order - b.turn_order);
   return activePlayers[0]?.turn_order || null;
 }
 
-function cleanPlayerName(value) {
-  return String(value || "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .slice(0, 24);
-}
-
-function cleanAnimalName(value) {
-  return String(value || "")
-    .trim()
-    .replace(/\s+/g, " ");
-}
+function cleanPlayerName(value) { return String(value || "").trim().replace(/\s+/g, " ").slice(0, 24); }
+function cleanAnimalName(value) { return String(value || "").trim().replace(/\s+/g, " "); }
 
 function normalizeAnimalName(value) {
   return String(value || "")
@@ -1357,66 +1006,41 @@ function normalizeAnimalName(value) {
     .replace(/\s+/g, " ");
 }
 
-function getFirstLetter(value) {
-  return normalizeAnimalName(value).replace(/[^a-z]/g, "").charAt(0) || "";
-}
+function getFirstLetter(value) { return normalizeAnimalName(value).replace(/[^a-z]/g, "").charAt(0) || ""; }
 
 function getLastLetter(value) {
   const letters = normalizeAnimalName(value).replace(/[^a-z]/g, "");
-
   return letters.charAt(letters.length - 1) || "";
 }
 
 function normalizeLobbyCode(value) {
-  return String(value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 8);
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
 }
 
 function generateLobbyCode() {
   const words = ["WOLF", "FALK", "PANDA", "LUCHS", "ZEBRA", "BIBER", "ADLER", "TIGER"];
-
   return `${randomItem(words)}${Math.floor(100 + Math.random() * 900)}`.slice(0, 8);
 }
 
 function formatTimer(seconds) {
-  if (seconds === null || seconds === undefined) {
-    return "—";
-  }
-
+  if (seconds === null || seconds === undefined) return "—";
   const safeSeconds = Math.max(0, Number(seconds) || 0);
-
   return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, "0")}`;
 }
 
 function toTitleCase(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .split(" ")
-    .map((part) => part ? part.charAt(0).toUpperCase() + part.slice(1) : "")
-    .join(" ");
+  return String(value || "").trim().toLowerCase().split(" ")
+    .map((p) => p ? p.charAt(0).toUpperCase() + p.slice(1) : "").join(" ");
 }
 
 function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "\"": "&quot;",
-    "'": "&#039;"
-  }[character]));
+  return String(value).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;"
+  }[c]));
 }
 
-function randomItem(items) {
-  return items[Math.floor(Math.random() * items.length)];
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+function randomItem(items) { return items[Math.floor(Math.random() * items.length)]; }
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function setMessage(element, text, type = "") {
   element.textContent = text;
