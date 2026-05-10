@@ -14,7 +14,7 @@ const supabaseClient = window.supabase
   : null;
 
 const page = document.body.dataset.page;
-console.log("Animalchain app.js v10 (Secure) geladen");
+console.log("Animalchain app.js v11 (Hardened) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -43,64 +43,54 @@ async function loadApprovedAnimals() {
 
 function generateLobbyCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const arr = new Uint8Array(6);
+  crypto.getRandomValues(arr);
   let code = "";
-  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 6; i++) code += chars[arr[i] % chars.length];
   return code;
 }
 
-function generateSecret() {
-  const arr = new Uint8Array(16);
-  crypto.getRandomValues(arr);
-  return Array.from(arr, b => b.toString(16).padStart(2, "0")).join("");
-}
-
+// === GEÄNDERT: createGame nutzt jetzt RPC statt direktem INSERT ===
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
   ensureSupabase();
-  const hostSecret = generateSecret();
-  const playerSecret = generateSecret();
-
-  const { data: game, error: gameError } = await supabaseClient
-    .from("games")
-    .insert({
-      code, status: "waiting", max_players: 4,
-      last_animal: "Turmfalke", current_required_letter: "e", current_turn_order: 1,
-      timer_enabled: timerEnabled, turn_seconds: turnSeconds, turn_started_at: null,
-      host_secret: hostSecret
-    })
-    .select().single();
-  if (gameError) throw new Error(`Lobby konnte nicht erstellt werden: ${gameError.message}`);
-
-  const { data: player, error: playerError } = await supabaseClient
-    .from("game_players")
-    .insert({
-      game_id: game.id, user_id: null, guest_name: cleanPlayerName(guestName),
-      turn_order: 1, is_eliminated: false, player_secret: playerSecret
-    })
-    .select().single();
-  if (playerError) throw new Error(`Spieler konnte nicht erstellt werden: ${playerError.message}`);
-  return { game, player, hostSecret, playerSecret };
+  const { data, error } = await supabaseClient.rpc("create_game", {
+    p_code: code,
+    p_guest_name: guestName,
+    p_timer_enabled: timerEnabled,
+    p_turn_seconds: turnSeconds
+  });
+  if (error) throw new Error(`Lobby konnte nicht erstellt werden: ${error.message}`);
+  return {
+    game: data.game,
+    player: data.player,
+    hostSecret: data.host_secret,
+    playerSecret: data.player_secret
+  };
 }
 
+// === GEÄNDERT: nutzt View statt Tabelle ===
 async function findGameByCode(code) {
   ensureSupabase();
   const { data, error } = await supabaseClient
-    .from("games").select("*").eq("code", normalizeLobbyCode(code)).single();
+    .from("games_public").select("*").eq("code", normalizeLobbyCode(code)).single();
   if (error) throw new Error("Lobby wurde nicht gefunden.");
   return data;
 }
 
+// === GEÄNDERT: nutzt View statt Tabelle ===
 async function loadGameById(gameId) {
   ensureSupabase();
   const { data, error } = await supabaseClient
-    .from("games").select("*").eq("id", gameId).single();
+    .from("games_public").select("*").eq("id", gameId).single();
   if (error) throw new Error(`Lobby konnte nicht geladen werden: ${error.message}`);
   return data;
 }
 
+// === GEÄNDERT: nutzt View statt Tabelle ===
 async function loadGamePlayers(gameId) {
   ensureSupabase();
   const { data, error } = await supabaseClient
-    .from("game_players").select("*").eq("game_id", gameId).order("turn_order", { ascending: true });
+    .from("game_players_public").select("*").eq("game_id", gameId).order("turn_order", { ascending: true });
   if (error) throw new Error(`Spieler konnten nicht geladen werden: ${error.message}`);
   return data || [];
 }
@@ -113,19 +103,17 @@ async function loadGameMoves(gameId) {
   return data || [];
 }
 
+// === GEÄNDERT: joinGame nutzt jetzt RPC statt direktem INSERT ===
 async function joinGame(game, guestName) {
-  const players = await loadGamePlayers(game.id);
-  if (players.length >= game.max_players) throw new Error("Diese Lobby ist voll.");
-  const playerSecret = generateSecret();
-  const { data: player, error } = await supabaseClient
-    .from("game_players")
-    .insert({
-      game_id: game.id, user_id: null, guest_name: cleanPlayerName(guestName),
-      turn_order: players.length + 1, is_eliminated: false, player_secret: playerSecret
-    })
-    .select().single();
+  const { data, error } = await supabaseClient.rpc("join_game", {
+    p_code: game.code,
+    p_guest_name: guestName
+  });
   if (error) throw new Error(`Beitritt fehlgeschlagen: ${error.message}`);
-  return { player, playerSecret };
+  return {
+    player: data.player,
+    playerSecret: data.player_secret
+  };
 }
 
 // SICHERE Aktionen via RPC-Functions
@@ -417,7 +405,7 @@ function initOnlinePage() {
       .channel(`game-${gameId}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "games", filter: `id=eq.${gameId}` },
-        (payload) => { if (payload.new) { state.game = { ...state.game, ...payload.new }; render(); } })
+        async () => { await refreshLobby(); })
       .on("postgres_changes",
         { event: "*", schema: "public", table: "game_players", filter: `game_id=eq.${gameId}` },
         async (payload) => {
@@ -501,6 +489,10 @@ function initOnlinePage() {
     }
     const animalName = cleanAnimalName(el.animalInput.value);
     if (!animalName) { setMessage(el.message, "Bitte gib ein Tier ein.", "warning"); return; }
+    if (animalName.length > 60) { setMessage(el.message, "Tiername zu lang.", "warning"); return; }
+    if (!/^[a-zäöüßA-ZÄÖÜ\s-]+$/.test(animalName)) {
+      setMessage(el.message, "Bitte nur Buchstaben, Leerzeichen oder Bindestrich verwenden.", "warning"); return;
+    }
     try {
       await rpcMakeMove(state.game.id, state.localPlayer.id, state.playerSecret, animalName);
       el.animalInput.value = "";
@@ -807,7 +799,7 @@ function availableAnimals(animals, firstLetter, usedNames = []) {
 }
 
 function cleanPlayerName(value) { return String(value || "").trim().replace(/\s+/g, " ").slice(0, 24); }
-function cleanAnimalName(value) { return String(value || "").trim().replace(/\s+/g, " "); }
+function cleanAnimalName(value) { return String(value || "").trim().replace(/\s+/g, " ").slice(0, 60); }
 
 function normalizeAnimalName(value) {
   return String(value || "")
