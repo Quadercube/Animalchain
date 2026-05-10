@@ -14,8 +14,7 @@ const supabaseClient = window.supabase
   : null;
 
 const page = document.body.dataset.page;
-
-console.log("Animalchain app.js v9 (Host-Kick + Turn-Fix) geladen");
+console.log("Animalchain app.js v10 (Secure) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -26,7 +25,6 @@ async function loadApprovedAnimals() {
   let allAnimals = [];
   let from = 0;
   const pageSize = 1000;
-
   while (true) {
     const { data, error } = await supabaseClient
       .from("animals")
@@ -34,26 +32,40 @@ async function loadApprovedAnimals() {
       .eq("status", "approved")
       .order("name", { ascending: true })
       .range(from, from + pageSize - 1);
-
     if (error) throw new Error(`Tierdatenbank konnte nicht geladen werden: ${error.message}`);
     if (!data || data.length === 0) break;
     allAnimals = allAnimals.concat(data);
     if (data.length < pageSize) break;
     from += pageSize;
   }
-
-  console.log("Insgesamt aus Supabase geladen:", allAnimals.length, "Tiere");
   return mergeAnimals(allAnimals, loadLocalAnimals());
+}
+
+function generateLobbyCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function generateSecret() {
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
   ensureSupabase();
+  const hostSecret = generateSecret();
+  const playerSecret = generateSecret();
+
   const { data: game, error: gameError } = await supabaseClient
     .from("games")
     .insert({
       code, status: "waiting", max_players: 4,
       last_animal: "Turmfalke", current_required_letter: "e", current_turn_order: 1,
-      timer_enabled: timerEnabled, turn_seconds: turnSeconds, turn_started_at: null
+      timer_enabled: timerEnabled, turn_seconds: turnSeconds, turn_started_at: null,
+      host_secret: hostSecret
     })
     .select().single();
   if (gameError) throw new Error(`Lobby konnte nicht erstellt werden: ${gameError.message}`);
@@ -62,11 +74,11 @@ async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
     .from("game_players")
     .insert({
       game_id: game.id, user_id: null, guest_name: cleanPlayerName(guestName),
-      turn_order: 1, is_eliminated: false
+      turn_order: 1, is_eliminated: false, player_secret: playerSecret
     })
     .select().single();
   if (playerError) throw new Error(`Spieler konnte nicht erstellt werden: ${playerError.message}`);
-  return { game, player };
+  return { game, player, hostSecret, playerSecret };
 }
 
 async function findGameByCode(code) {
@@ -104,91 +116,54 @@ async function loadGameMoves(gameId) {
 async function joinGame(game, guestName) {
   const players = await loadGamePlayers(game.id);
   if (players.length >= game.max_players) throw new Error("Diese Lobby ist voll.");
+  const playerSecret = generateSecret();
   const { data: player, error } = await supabaseClient
     .from("game_players")
     .insert({
       game_id: game.id, user_id: null, guest_name: cleanPlayerName(guestName),
-      turn_order: players.length + 1, is_eliminated: false
+      turn_order: players.length + 1, is_eliminated: false, player_secret: playerSecret
     })
     .select().single();
   if (error) throw new Error(`Beitritt fehlgeschlagen: ${error.message}`);
-  return player;
+  return { player, playerSecret };
 }
 
-async function saveMove({ gameId, gamePlayerId, guestName, animalName, requiredLetter, moveNumber }) {
-  ensureSupabase();
-  const cleanAnimal = cleanAnimalName(animalName);
-  const normalizedAnimal = normalizeAnimalName(cleanAnimal);
-  const nextRequiredLetter = getLastLetter(normalizedAnimal);
-
-  const { data, error } = await supabaseClient
-    .from("moves")
-    .insert({
-      game_id: gameId, game_player_id: gamePlayerId, player_id: null,
-      animal_name: toTitleCase(cleanAnimal), normalized_animal_name: normalizedAnimal,
-      guest_name: cleanPlayerName(guestName) || "Gast",
-      required_letter: String(requiredLetter || "").toLowerCase(),
-      next_required_letter: nextRequiredLetter, move_number: moveNumber
-    })
-    .select().single();
-  if (error) throw new Error(`Spielzug konnte nicht gespeichert werden: ${error.message}`);
+// SICHERE Aktionen via RPC-Functions
+async function rpcMakeMove(gameId, playerId, playerSecret, animalName) {
+  const { data, error } = await supabaseClient.rpc("make_move", {
+    p_game_id: gameId, p_player_id: playerId,
+    p_player_secret: playerSecret, p_animal_name: animalName
+  });
+  if (error) throw new Error(error.message);
   return data;
 }
 
-// FIX: updateGameAfterMove gibt jetzt das geupdatete Game zurück
-async function updateGameAfterMove(gameId, animalName, nextRequiredLetter, nextTurnOrder) {
-  ensureSupabase();
-  const { data, error } = await supabaseClient
-    .from("games")
-    .update({
-      last_animal: toTitleCase(animalName),
-      current_required_letter: String(nextRequiredLetter || "").toLowerCase(),
-      current_turn_order: nextTurnOrder,
-      turn_started_at: new Date().toISOString(),
-      status: "playing"
-    })
-    .eq("id", gameId)
-    .select()
-    .single();
-  if (error) throw new Error(`Lobby konnte nicht aktualisiert werden: ${error.message}`);
+async function rpcStartGame(gameId, hostSecret, animalName) {
+  const { data, error } = await supabaseClient.rpc("start_game", {
+    p_game_id: gameId, p_host_secret: hostSecret, p_animal_name: animalName
+  });
+  if (error) throw new Error(error.message);
   return data;
 }
 
-async function eliminatePlayer(playerId) {
-  ensureSupabase();
-  const { error } = await supabaseClient
-    .from("game_players")
-    .update({ is_eliminated: true, eliminated_at: new Date().toISOString() })
-    .eq("id", playerId);
-  if (error) throw new Error(`Spieler konnte nicht eliminiert werden: ${error.message}`);
+async function rpcKickPlayer(gameId, hostSecret, playerId) {
+  const { data, error } = await supabaseClient.rpc("kick_player", {
+    p_game_id: gameId, p_host_secret: hostSecret, p_player_id: playerId
+  });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
-async function updateGameTurn(gameId, nextTurnOrder, status = "playing") {
-  ensureSupabase();
-  const { error } = await supabaseClient
-    .from("games")
-    .update({
-      current_turn_order: nextTurnOrder,
-      turn_started_at: new Date().toISOString(),
-      status
-    })
-    .eq("id", gameId);
-  if (error) throw new Error(`Spielstand konnte nicht aktualisiert werden: ${error.message}`);
-}
-
-// NEU: Spieler aus Lobby entfernen (Kick)
-async function kickPlayer(playerId) {
-  ensureSupabase();
-  const { error } = await supabaseClient
-    .from("game_players")
-    .delete()
-    .eq("id", playerId);
-  if (error) throw new Error(`Spieler konnte nicht entfernt werden: ${error.message}`);
+async function rpcSelfEliminate(gameId, playerId, playerSecret) {
+  const { data, error } = await supabaseClient.rpc("self_eliminate", {
+    p_game_id: gameId, p_player_id: playerId, p_player_secret: playerSecret
+  });
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 function initPracticePage() {
   const state = { animals: [], lastAnimal: "Turmfalke", requiredLetter: "e", moves: [] };
-
   const el = mapElements({
     lastAnimal: "#practiceLastAnimal", requiredLetter: "#practiceRequiredLetter",
     moveCount: "#practiceMoveCount", animalForm: "#practiceAnimalForm",
@@ -205,15 +180,10 @@ function initPracticePage() {
   async function start() {
     try {
       state.animals = await loadApprovedAnimals();
-      if (!state.animals.length) {
-        setMessage(el.message, "Keine Tiere in Supabase gefunden.", "warning");
-        render(); return;
-      }
+      if (!state.animals.length) { setMessage(el.message, "Keine Tiere in Supabase gefunden.", "warning"); render(); return; }
       startNewRound(false);
       setMessage(el.message, `${state.animals.length} Tiere geladen. Du bist dran.`, "success");
-    } catch (error) {
-      setMessage(el.message, error.message, "error");
-    }
+    } catch (error) { setMessage(el.message, error.message, "error"); }
     render();
   }
 
@@ -286,18 +256,13 @@ function initPracticePage() {
 
 function initOnlinePage() {
   const state = {
-    animals: [],
-    guestName: "Gast",
-    game: null,
-    localPlayer: null,
-    isHost: false,  // NEU: Bin ich der Host?
-    players: [],
-    moves: [],
-    countdownTimer: null,
-    realtimeChannel: null,
-    fallbackTimer: null,
-    lastSeenTurnKey: null,
-    localTurnStartedAt: null
+    animals: [], guestName: "Gast",
+    game: null, localPlayer: null,
+    hostSecret: null, playerSecret: null,
+    isHost: false,
+    players: [], moves: [],
+    countdownTimer: null, realtimeChannel: null, fallbackTimer: null,
+    lastSeenTurnKey: null, localTurnStartedAt: null
   };
 
   const el = mapElements({
@@ -332,23 +297,17 @@ function initOnlinePage() {
     localAnimalForm.addEventListener("submit", handleAddLocalAnimal);
   }
 
-  // NEU: Event-Delegation für Kick-Buttons
   el.playersList.addEventListener("click", async (event) => {
     const kickButton = event.target.closest(".kick-button");
     if (!kickButton) return;
-
     const playerId = kickButton.dataset.playerId;
     const playerName = kickButton.dataset.playerName;
     if (!playerId) return;
-
     if (!confirm(`${playerName} wirklich aus der Lobby entfernen?`)) return;
-
     try {
-      await kickPlayer(playerId);
+      await rpcKickPlayer(state.game.id, state.hostSecret, playerId);
       setMessage(el.message, `${playerName} wurde aus der Lobby entfernt.`, "success");
-    } catch (error) {
-      setMessage(el.message, error.message, "error");
-    }
+    } catch (error) { setMessage(el.message, error.message, "error"); }
   });
 
   start();
@@ -357,9 +316,7 @@ function initOnlinePage() {
     try {
       state.animals = await loadApprovedAnimals();
       setMessage(el.message, `${state.animals.length} Tiere geladen. Erstelle eine Lobby oder tritt einer bei.`, "success");
-    } catch (error) {
-      setMessage(el.message, error.message, "error");
-    }
+    } catch (error) { setMessage(el.message, error.message, "error"); }
     render();
   }
 
@@ -377,111 +334,71 @@ function initOnlinePage() {
       if (!animalName) { localAnimalMessage.textContent = "Bitte gib ein Tier ein."; return; }
       if (normalized.length < 3) { localAnimalMessage.textContent = "Der Tiername ist zu kurz."; return; }
       if (!/^[a-zäöüßA-ZÄÖÜ\s-]+$/.test(animalName)) {
-        localAnimalMessage.textContent = "Bitte nur Buchstaben, Leerzeichen oder Bindestrich verwenden.";
-        return;
+        localAnimalMessage.textContent = "Bitte nur Buchstaben, Leerzeichen oder Bindestrich verwenden."; return;
       }
       const localAnimal = addLocalAnimal(animalName);
       state.animals = mergeAnimals(state.animals, [localAnimal]);
       localAnimalInput.value = "";
       localAnimalMessage.textContent = `"${toTitleCase(animalName)}" wurde lokal hinzugefügt.`;
       setMessage(el.message, `"${toTitleCase(animalName)}" ist jetzt lokal spielbar.`, "success");
-    } catch (error) {
-      localAnimalMessage.textContent = error.message;
-    }
+    } catch (error) { localAnimalMessage.textContent = error.message; }
   }
 
   async function handleCreateLobby() {
     try {
       const code = generateLobbyCode();
-      const { game, player } = await createGame({
+      const { game, player, hostSecret, playerSecret } = await createGame({
         code, guestName: state.guestName,
         timerEnabled: el.timerEnabled.checked,
         turnSeconds: Number(el.turnSeconds.value || 60)
       });
-
       state.game = game;
       state.localPlayer = player;
-      state.isHost = true;  // Wer erstellt = Host
+      state.hostSecret = hostSecret;
+      state.playerSecret = playerSecret;
+      state.isHost = true;
       state.players = [player];
       state.moves = [];
       el.lobbyTicket.hidden = false;
       el.lobbyCode.textContent = code;
-
       subscribeToGame(game.id);
       startCountdownTimer();
       render();
       setMessage(el.message, `Lobby ${code} erstellt. Du bist der Host.`, "success");
-    } catch (error) {
-      setMessage(el.message, error.message, "error");
-    }
+    } catch (error) { setMessage(el.message, error.message, "error"); }
   }
 
   async function handleJoinLobby(event) {
     event.preventDefault();
     try {
       const game = await findGameByCode(el.joinCode.value);
-      const player = await joinGame(game, state.guestName);
-
+      const { player, playerSecret } = await joinGame(game, state.guestName);
       state.game = game;
       state.localPlayer = player;
-      state.isHost = false;  // Joiner ist nie Host
+      state.playerSecret = playerSecret;
+      state.hostSecret = null;
+      state.isHost = false;
       el.lobbyTicket.hidden = false;
       el.lobbyCode.textContent = game.code;
-
       await refreshLobby();
       subscribeToGame(game.id);
       startCountdownTimer();
       setMessage(el.message, `Du bist Lobby ${game.code} beigetreten. Warte bis der Host startet.`, "success");
-    } catch (error) {
-      setMessage(el.message, error.message, "error");
-    }
+    } catch (error) { setMessage(el.message, error.message, "error"); }
   }
 
   async function handleStartGame() {
     if (!state.game?.id) { setMessage(el.message, "Du bist in keiner Lobby.", "warning"); return; }
-    if (state.players.length < 2) { setMessage(el.message, "Du brauchst mindestens 2 Spieler zum Starten.", "warning"); return; }
-    await startNewGameRound("Spiel gestartet!");
-  }
-
-  async function startNewGameRound(successPrefix) {
+    if (!state.isHost || !state.hostSecret) { setMessage(el.message, "Nur der Host kann starten.", "warning"); return; }
+    if (state.players.length < 2) { setMessage(el.message, "Du brauchst mindestens 2 Spieler.", "warning"); return; }
     try {
-      await supabaseClient
-        .from("game_players")
-        .update({ is_eliminated: false, eliminated_at: null })
-        .eq("game_id", state.game.id);
-
-      const { error: deleteError } = await supabaseClient
-        .from("moves").delete().eq("game_id", state.game.id);
-      if (deleteError) throw new Error("Alte Tiere konnten nicht gelöscht werden: " + deleteError.message);
-
-      state.moves = [];
+      const animal = randomItem(state.animals) || { name: "Turmfalke" };
+      await rpcStartGame(state.game.id, state.hostSecret, animal.name);
       state.lastSeenTurnKey = null;
       state.localTurnStartedAt = null;
-
-      const animal = randomItem(state.animals) || { name: "Turmfalke" };
-
-      // Hole aktuelle Spieler um den ersten Spieler zu finden
-      const currentPlayers = await loadGamePlayers(state.game.id);
-      const firstPlayer = currentPlayers[0];
-      const firstTurnOrder = firstPlayer?.turn_order || 1;
-
-      const { data: updatedGame, error: gameError } = await supabaseClient
-        .from("games")
-        .update({
-          status: "playing", last_animal: animal.name,
-          current_required_letter: getLastLetter(animal.name),
-          current_turn_order: firstTurnOrder,
-          turn_started_at: new Date().toISOString()
-        })
-        .eq("id", state.game.id).select().single();
-
-      if (gameError) throw new Error(gameError.message);
-      state.game = updatedGame;
-      render();
-      setMessage(el.message, `${successPrefix} Starttier: ${animal.name}`, "success");
-    } catch (error) {
-      setMessage(el.message, error.message, "error");
-    }
+      await refreshLobby();
+      setMessage(el.message, `Spiel gestartet! Starttier: ${animal.name}`, "success");
+    } catch (error) { setMessage(el.message, error.message, "error"); }
   }
 
   async function copyLobbyCode() {
@@ -495,80 +412,48 @@ function initOnlinePage() {
   }
 
   function subscribeToGame(gameId) {
-    if (state.realtimeChannel) {
-      supabaseClient.removeChannel(state.realtimeChannel);
-    }
-
+    if (state.realtimeChannel) supabaseClient.removeChannel(state.realtimeChannel);
     state.realtimeChannel = supabaseClient
       .channel(`game-${gameId}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "games", filter: `id=eq.${gameId}` },
-        (payload) => {
-          if (payload.new) {
-            state.game = payload.new;
-            render();
-          }
-        }
-      )
+        (payload) => { if (payload.new) { state.game = { ...state.game, ...payload.new }; render(); } })
       .on("postgres_changes",
         { event: "*", schema: "public", table: "game_players", filter: `game_id=eq.${gameId}` },
         async (payload) => {
-          // Wenn ich gekickt wurde → zurück zur Lobby-Auswahl
           if (payload.eventType === "DELETE" && payload.old?.id === state.localPlayer?.id) {
-            handleKickedOut();
-            return;
+            handleKickedOut(); return;
           }
           state.players = await loadGamePlayers(gameId);
           render();
-        }
-      )
+        })
       .on("postgres_changes",
         { event: "*", schema: "public", table: "moves", filter: `game_id=eq.${gameId}` },
-        async () => {
-          state.moves = await loadGameMoves(gameId);
-          render();
-        }
-      )
+        async () => { state.moves = await loadGameMoves(gameId); render(); })
       .subscribe((status) => {
-        console.log("Realtime status:", status);
-        if (status === "SUBSCRIBED") {
-          if (state.fallbackTimer) {
-            clearInterval(state.fallbackTimer);
-            state.fallbackTimer = null;
-          }
+        if (status === "SUBSCRIBED" && state.fallbackTimer) {
+          clearInterval(state.fallbackTimer); state.fallbackTimer = null;
         } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           startFallbackPolling();
         }
       });
-
-    // Fallback IMMER aktivieren (zur Sicherheit), aber langsamer
-    setTimeout(() => {
-      if (!state.fallbackTimer) {
-        startFallbackPolling();
-      }
-    }, 2000);
+    setTimeout(() => { if (!state.fallbackTimer) startFallbackPolling(); }, 2000);
   }
 
   function handleKickedOut() {
     setMessage(el.message, "Du wurdest aus der Lobby entfernt.", "warning");
-    if (state.realtimeChannel) {
-      supabaseClient.removeChannel(state.realtimeChannel);
-      state.realtimeChannel = null;
-    }
+    if (state.realtimeChannel) { supabaseClient.removeChannel(state.realtimeChannel); state.realtimeChannel = null; }
     if (state.countdownTimer) clearInterval(state.countdownTimer);
     if (state.fallbackTimer) clearInterval(state.fallbackTimer);
-    state.game = null;
-    state.localPlayer = null;
-    state.isHost = false;
-    state.players = [];
-    state.moves = [];
+    state.game = null; state.localPlayer = null;
+    state.hostSecret = null; state.playerSecret = null;
+    state.isHost = false; state.players = []; state.moves = [];
     el.lobbyTicket.hidden = true;
     render();
   }
 
   function startFallbackPolling() {
     if (state.fallbackTimer) return;
-    console.log("Fallback-Polling aktiv");
     state.fallbackTimer = setInterval(refreshLobby, 1500);
   }
 
@@ -580,62 +465,33 @@ function initOnlinePage() {
         loadGamePlayers(state.game.id),
         loadGameMoves(state.game.id)
       ]);
-
-      // Prüfe ob ich noch in der Lobby bin
       if (state.localPlayer && !players.some(p => p.id === state.localPlayer.id)) {
-        handleKickedOut();
-        return;
+        handleKickedOut(); return;
       }
-
-      state.game = game;
-      state.players = players;
-      state.moves = moves;
+      state.game = game; state.players = players; state.moves = moves;
       render();
-    } catch (error) {
-      console.error("Refresh-Fehler:", error);
-    }
+    } catch (error) { console.error("Refresh-Fehler:", error); }
   }
 
   async function checkLocalTimerExpiration() {
     if (!state.game?.timer_enabled || state.game?.status !== "playing") return;
-
     const currentPlayer = getCurrentOnlinePlayer();
     if (!currentPlayer || currentPlayer.is_eliminated) return;
     if (state.localPlayer?.id !== currentPlayer.id) return;
-
     const remaining = getRemainingSeconds();
     if (remaining === null || remaining > 0) return;
-
     const activePlayers = state.players.filter((p) => !p.is_eliminated);
     if (activePlayers.length <= 1) return;
-
     try {
-      await eliminatePlayer(currentPlayer.id);
-      const updatedPlayers = state.players.map((p) =>
-        p.id === currentPlayer.id ? { ...p, is_eliminated: true } : p
-      );
-      const nextTurnOrder = getNextActiveTurnOrder(updatedPlayers, currentPlayer.turn_order);
-      const remainingPlayers = updatedPlayers.filter((p) => !p.is_eliminated);
-
-      await updateGameTurn(
-        state.game.id,
-        nextTurnOrder || currentPlayer.turn_order,
-        remainingPlayers.length <= 1 ? "finished" : "playing"
-      );
-
-      state.players = updatedPlayers;
+      await rpcSelfEliminate(state.game.id, state.localPlayer.id, state.playerSecret);
       setMessage(el.message, `Deine Zeit ist abgelaufen!`, "warning");
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   }
 
-  // FIX: Update sofort lokal anwenden, dann zur DB
   async function handleMove(event) {
     event.preventDefault();
     if (!state.game || !state.localPlayer) { setMessage(el.message, "Du bist in keiner Lobby.", "warning"); return; }
     if (state.game.status !== "playing") { setMessage(el.message, "Das Spiel hat noch nicht gestartet.", "warning"); return; }
-
     const currentPlayer = getCurrentOnlinePlayer();
     if (!currentPlayer || currentPlayer.id !== state.localPlayer.id) {
       setMessage(el.message, "Du bist gerade nicht dran.", "warning"); return;
@@ -643,60 +499,28 @@ function initOnlinePage() {
     if (currentPlayer.is_eliminated) {
       setMessage(el.message, "Du bist ausgeschieden und kannst nur noch zuschauen.", "warning"); return;
     }
-
     const animalName = cleanAnimalName(el.animalInput.value);
-    const validation = validateOnlineAnimal(animalName);
-    if (!validation.ok) { setMessage(el.message, validation.message, validation.type); return; }
-
+    if (!animalName) { setMessage(el.message, "Bitte gib ein Tier ein.", "warning"); return; }
     try {
-      const nextRequiredLetter = getLastLetter(animalName);
-
-      // 1. Move speichern
-      await saveMove({
-        gameId: state.game.id, gamePlayerId: state.localPlayer.id,
-        guestName: state.guestName, animalName,
-        requiredLetter: state.game.current_required_letter,
-        moveNumber: state.moves.length + 1
-      });
-
-      // 2. Nächsten Spieler bestimmen
-      const nextTurnOrder = getNextActiveTurnOrder(state.players, currentPlayer.turn_order);
-
-      // 3. Game in DB updaten
-      const updatedGame = await updateGameAfterMove(
-        state.game.id, animalName, nextRequiredLetter,
-        nextTurnOrder || currentPlayer.turn_order
-      );
-
-      // 4. WICHTIG: Lokalen state SOFORT aktualisieren - nicht warten auf Realtime
-      state.game = updatedGame;
-      state.moves = await loadGameMoves(state.game.id);
-
+      await rpcMakeMove(state.game.id, state.localPlayer.id, state.playerSecret, animalName);
       el.animalInput.value = "";
-      render();
+      await refreshLobby();
       setMessage(el.message, `${state.guestName} spielt: ${toTitleCase(animalName)}`, "success");
-    } catch (error) {
-      setMessage(el.message, error.message, "error");
-    }
-  }
-
-  function validateOnlineAnimal(animalName) {
-    const normalized = normalizeAnimalName(animalName);
-    const needed = String(state.game?.current_required_letter || "e").toLowerCase();
-    if (!animalName) return { ok: false, type: "warning", message: "Bitte gib ein Tier ein." };
-    if (getFirstLetter(normalized) !== needed)
-      return { ok: false, type: "error", message: `Das Tier muss mit ${needed.toUpperCase()} anfangen.` };
-    if (!findAnimal(state.animals, animalName))
-      return { ok: false, type: "error", message: `"${animalName}" ist nicht in deiner Tierliste.` };
-    if (state.moves.some((m) => m.normalized_animal_name === normalized))
-      return { ok: false, type: "error", message: `"${animalName}" wurde schon gespielt.` };
-    return { ok: true };
+    } catch (error) { setMessage(el.message, error.message, "error"); }
   }
 
   async function newRound() {
     if (!state.game?.id) { setMessage(el.message, "Du bist in keiner Lobby.", "warning"); return; }
+    if (!state.isHost || !state.hostSecret) { setMessage(el.message, "Nur der Host kann neue Runden starten.", "warning"); return; }
     if (state.players.length < 2) { setMessage(el.message, "Du brauchst mindestens 2 Spieler.", "warning"); return; }
-    await startNewGameRound("Neue Runde gestartet.");
+    try {
+      const animal = randomItem(state.animals) || { name: "Turmfalke" };
+      await rpcStartGame(state.game.id, state.hostSecret, animal.name);
+      state.lastSeenTurnKey = null;
+      state.localTurnStartedAt = null;
+      await refreshLobby();
+      setMessage(el.message, `Neue Runde gestartet. Starttier: ${animal.name}`, "success");
+    } catch (error) { setMessage(el.message, error.message, "error"); }
   }
 
   function startCountdownTimer() {
@@ -712,17 +536,12 @@ function initOnlinePage() {
   }
 
   function getRemainingSeconds() {
-    if (!state.game?.timer_enabled || !state.game?.turn_started_at || state.game?.status !== "playing") {
-      return null;
-    }
-
+    if (!state.game?.timer_enabled || !state.game?.turn_started_at || state.game?.status !== "playing") return null;
     const turnKey = `${state.game.id}-${state.game.current_turn_order}-${state.game.turn_started_at}`;
-
     if (state.lastSeenTurnKey !== turnKey) {
       state.lastSeenTurnKey = turnKey;
       state.localTurnStartedAt = Date.now();
     }
-
     const elapsed = Math.floor((Date.now() - state.localTurnStartedAt) / 1000);
     return Math.max(0, Number(state.game.turn_seconds || 60) - elapsed);
   }
@@ -757,33 +576,24 @@ function initOnlinePage() {
 
     el.lastAnimal.textContent = state.game?.last_animal || "---";
     el.requiredLetter.textContent = state.game?.current_required_letter
-      ? state.game.current_required_letter.toUpperCase()
-      : "---";
+      ? state.game.current_required_letter.toUpperCase() : "---";
 
     renderTimerOnly();
 
-    if (!state.game) {
-      el.turnBadge.textContent = "Keine aktive Lobby";
-    } else if (state.game.status === "waiting") {
+    if (!state.game) el.turnBadge.textContent = "Keine aktive Lobby";
+    else if (state.game.status === "waiting")
       el.turnBadge.textContent = `Lobby wartet · ${state.players.length} Spieler${state.isHost ? " · Du bist Host" : ""}`;
-    } else if (state.game.status === "finished") {
-      el.turnBadge.textContent = "Spiel beendet";
-    } else if (currentPlayer) {
+    else if (state.game.status === "finished") el.turnBadge.textContent = "Spiel beendet";
+    else if (currentPlayer)
       el.turnBadge.textContent = `${currentPlayer.guest_name} ist dran${currentPlayer.is_eliminated ? " · ausgeschieden" : ""}`;
-    } else {
-      el.turnBadge.textContent = "Warte...";
-    }
+    else el.turnBadge.textContent = "Warte...";
 
     if (startGameButton) {
       if (state.isHost && state.game?.status === "waiting" && state.players.length >= 2) {
-        startGameButton.hidden = false;
-        startGameButton.textContent = "Spiel starten";
+        startGameButton.hidden = false; startGameButton.textContent = "Spiel starten";
       } else if (state.isHost && state.game?.status === "finished") {
-        startGameButton.hidden = false;
-        startGameButton.textContent = "Erneut spielen";
-      } else {
-        startGameButton.hidden = true;
-      }
+        startGameButton.hidden = false; startGameButton.textContent = "Erneut spielen";
+      } else { startGameButton.hidden = true; }
     }
 
     el.playersList.innerHTML = state.players.length
@@ -794,46 +604,25 @@ function initOnlinePage() {
             <article class="player-row ${p.is_eliminated ? "eliminated" : ""}">
               <div>
                 <strong>${escapeHtml(p.guest_name)}</strong>
-                <div class="meta">
-                  Spieler ${p.turn_order}${isMe ? " · Du" : ""}${p.turn_order === 1 ? " · Host" : ""}
-                </div>
+                <div class="meta">Spieler ${p.turn_order}${isMe ? " · Du" : ""}${p.turn_order === 1 ? " · Host" : ""}</div>
               </div>
               <div style="display: flex; gap: 8px; align-items: center;">
-                ${
-                  p.is_eliminated
-                    ? `<span class="pill danger">Raus</span>`
-                    : state.game?.status === "waiting"
-                      ? `<span class="pill">Bereit</span>`
-                      : p.turn_order === state.game?.current_turn_order
-                        ? `<span class="pill success">Dran</span>`
-                        : `<span class="pill">Aktiv</span>`
-                }
-                ${canKick ? `
-                  <button class="kick-button button ghost"
-                          data-player-id="${p.id}"
-                          data-player-name="${escapeHtml(p.guest_name)}"
-                          style="padding: 4px 10px; font-size: 13px;">
-                    Kick
-                  </button>
-                ` : ""}
+                ${ p.is_eliminated ? `<span class="pill danger">Raus</span>`
+                  : state.game?.status === "waiting" ? `<span class="pill">Bereit</span>`
+                  : p.turn_order === state.game?.current_turn_order ? `<span class="pill success">Dran</span>`
+                  : `<span class="pill">Aktiv</span>` }
+                ${canKick ? `<button class="kick-button button ghost" data-player-id="${p.id}" data-player-name="${escapeHtml(p.guest_name)}" style="padding: 4px 10px; font-size: 13px;">Kick</button>` : ""}
               </div>
-            </article>
-          `;
+            </article>`;
         }).join("")
       : `<p class="hint">Noch keine Spieler.</p>`;
 
     el.movesList.innerHTML = state.moves.length
-      ? state.moves.map((m) => `
-          <li>
-            <strong>${escapeHtml(m.animal_name)}</strong>
-            <span class="hint">von ${escapeHtml(m.guest_name || "Gast")}</span>
-          </li>
-        `).join("")
+      ? state.moves.map((m) => `<li><strong>${escapeHtml(m.animal_name)}</strong><span class="hint">von ${escapeHtml(m.guest_name || "Gast")}</span></li>`).join("")
       : `<li><strong>${escapeHtml(state.game?.last_animal || "Turmfalke")}</strong><span class="hint">Starttier</span></li>`;
 
     if (state.game?.status === "playing" && activePlayers.length === 1 && state.players.length > 1) {
       setMessage(el.message, `${activePlayers[0].guest_name} gewinnt! Drücke "Neue Runde" um nochmal zu spielen.`, "success");
-      supabaseClient.from("games").update({ status: "finished" }).eq("id", state.game.id);
     }
   }
 }
@@ -863,9 +652,7 @@ function initLocalPage() {
     try {
       state.animals = await loadApprovedAnimals();
       setMessage(el.message, `${state.animals.length} Tiere geladen. Füge Spieler hinzu.`, "success");
-    } catch (error) {
-      setMessage(el.message, error.message, "error");
-    }
+    } catch (error) { setMessage(el.message, error.message, "error"); }
     render();
   }
 
@@ -883,9 +670,7 @@ function initLocalPage() {
     const animal = randomItem(state.animals) || { name: "Turmfalke" };
     state.lastAnimal = animal.name;
     state.requiredLetter = getLastLetter(animal.name);
-    state.moves = [];
-    state.turnIndex = 0;
-    state.started = true;
+    state.moves = []; state.turnIndex = 0; state.started = true;
     setMessage(el.message, `Runde gestartet. Starttier: ${animal.name}`, "success");
     render();
   }
@@ -924,8 +709,7 @@ function initLocalPage() {
           <article class="player-row">
             <div><strong>${escapeHtml(p.name)}</strong><div class="meta">Spieler ${i + 1}</div></div>
             ${state.started && i === state.turnIndex ? `<span class="pill success">Dran</span>` : `<span class="pill">Dabei</span>`}
-          </article>
-        `).join("")
+          </article>`).join("")
       : `<p class="hint">Noch keine Spieler.</p>`;
 
     el.lastAnimal.textContent = state.lastAnimal || "---";
@@ -940,10 +724,8 @@ function initLocalPage() {
 }
 
 function loadLocalAnimals() {
-  try {
-    const animals = JSON.parse(localStorage.getItem(LOCAL_ANIMALS_KEY));
-    return Array.isArray(animals) ? animals : [];
-  } catch { return []; }
+  try { const animals = JSON.parse(localStorage.getItem(LOCAL_ANIMALS_KEY)); return Array.isArray(animals) ? animals : []; }
+  catch { return []; }
 }
 
 function saveLocalAnimals(animals) { localStorage.setItem(LOCAL_ANIMALS_KEY, JSON.stringify(animals)); }
@@ -954,8 +736,7 @@ function createLocalAnimal(name) {
   return {
     id: `local-${normalizedName}`, name: toTitleCase(cleanName),
     normalized_name: normalizedName,
-    first_letter: getFirstLetter(normalizedName),
-    last_letter: getLastLetter(normalizedName),
+    first_letter: getFirstLetter(normalizedName), last_letter: getLastLetter(normalizedName),
     status: "approved", local: true
   };
 }
@@ -967,8 +748,7 @@ function addLocalAnimal(name) {
   }
   const localAnimals = loadLocalAnimals();
   if (!localAnimals.some((item) => item.normalized_name === animal.normalized_name)) {
-    localAnimals.push(animal);
-    saveLocalAnimals(localAnimals);
+    localAnimals.push(animal); saveLocalAnimals(localAnimals);
   }
   return animal;
 }
@@ -980,8 +760,7 @@ function mergeAnimals(databaseAnimals, localAnimals) {
     const normalized = animal.normalized_name || normalizeAnimalName(animal.name);
     if (!normalized) return;
     animalsByName.set(normalized, {
-      ...animal,
-      normalized_name: normalized,
+      ...animal, normalized_name: normalized,
       first_letter: animal.first_letter || getFirstLetter(animal.name),
       last_letter: animal.last_letter || getLastLetter(animal.name)
     });
@@ -1027,17 +806,6 @@ function availableAnimals(animals, firstLetter, usedNames = []) {
   });
 }
 
-function getNextActiveTurnOrder(players, currentTurnOrder) {
-  const activePlayers = players.filter((p) => !p.is_eliminated).sort((a, b) => a.turn_order - b.turn_order);
-  if (!activePlayers.length) return null;
-  return (activePlayers.find((p) => p.turn_order > currentTurnOrder) || activePlayers[0]).turn_order;
-}
-
-function firstActiveTurnOrder(players) {
-  const activePlayers = players.filter((p) => !p.is_eliminated).sort((a, b) => a.turn_order - b.turn_order);
-  return activePlayers[0]?.turn_order || null;
-}
-
 function cleanPlayerName(value) { return String(value || "").trim().replace(/\s+/g, " ").slice(0, 24); }
 function cleanAnimalName(value) { return String(value || "").trim().replace(/\s+/g, " "); }
 
@@ -1058,11 +826,6 @@ function getLastLetter(value) {
 
 function normalizeLobbyCode(value) {
   return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
-}
-
-function generateLobbyCode() {
-  const words = ["WOLF", "FALK", "PANDA", "LUCHS", "ZEBRA", "BIBER", "ADLER", "TIGER"];
-  return `${randomItem(words)}${Math.floor(100 + Math.random() * 900)}`.slice(0, 8);
 }
 
 function formatTimer(seconds) {
