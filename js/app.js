@@ -739,6 +739,7 @@ function autoCollapseLobbyPanels(shouldCollapse) {
       updatePageLayout();
     }
   }
+}
 
 function initLocalPage() {
   const state = {
@@ -1058,8 +1059,8 @@ function updatePageLayout() {
     main.classList.add("no-sidebar");
   } else {
     main.classList.remove("no-sidebar");
-  }
-}
+      }
+    }
 
 // Beim Laden der Seite Restore-Bar + Layout prüfen
 window.addEventListener("DOMContentLoaded", () => {
