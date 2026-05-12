@@ -665,6 +665,7 @@ function initOnlinePage() {
     }
   }
 
+ let lastMovesHash = "";
   function render() {
     const currentPlayer = getCurrentOnlinePlayer();
     const activePlayers = state.players.filter((p) => !p.is_eliminated);
@@ -691,35 +692,55 @@ function initOnlinePage() {
       } else { startGameButton.hidden = true; }
     }
 
-    el.playersList.innerHTML = state.players.length
-      ? state.players.map((p) => {
-          const isMe = p.id === state.localPlayer?.id;
-          const canKick = state.isHost && !isMe && state.game?.status === "waiting";
-          return `
-            <article class="player-row ${p.is_eliminated ? "eliminated" : ""}">
-              <div>
-                <strong>${escapeHtml(p.guest_name)}</strong>
-                <div class="meta">Spieler ${p.turn_order}${isMe ? " · Du" : ""}${p.turn_order === 1 ? " · Host" : ""}</div>
-              </div>
-              <div style="display: flex; gap: 8px; align-items: center;">
-                ${ p.is_eliminated ? `<span class="pill danger">Raus</span>`
-                  : state.game?.status === "waiting" ? `<span class="pill">Bereit</span>`
-                  : p.turn_order === state.game?.current_turn_order ? `<span class="pill success">Dran</span>`
-                  : `<span class="pill">Aktiv</span>` }
-                ${canKick ? `<button class="kick-button button ghost" data-player-id="${p.id}" data-player-name="${escapeHtml(p.guest_name)}" style="padding: 4px 10px; font-size: 13px;">Kick</button>` : ""}
-              </div>
-            </article>`;
-        }).join("")
-      : `<p class="hint">Noch keine Spieler.</p>`;
+    // Spieler-Liste: Hash-Check um unnötiges Neu-Rendern zu vermeiden
+    const playersHash = JSON.stringify(state.players.map(p => [p.id, p.guest_name, p.is_eliminated, p.turn_order])) + state.game?.status + state.game?.current_turn_order;
+    if (playersHash !== el.playersList._lastHash) {
+      el.playersList._lastHash = playersHash;
+      el.playersList.innerHTML = state.players.length
+        ? state.players.map((p) => {
+            const isMe = p.id === state.localPlayer?.id;
+            const canKick = state.isHost && !isMe && state.game?.status === "waiting";
+            return `
+              <article class="player-row ${p.is_eliminated ? "eliminated" : ""}">
+                <div>
+                  <strong>${escapeHtml(p.guest_name)}</strong>
+                  <div class="meta">Spieler ${p.turn_order}${isMe ? " · Du" : ""}${p.turn_order === 1 ? " · Host" : ""}</div>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  ${ p.is_eliminated ? `<span class="pill danger">Raus</span>`
+                    : state.game?.status === "waiting" ? `<span class="pill">Bereit</span>`
+                    : p.turn_order === state.game?.current_turn_order ? `<span class="pill success">Dran</span>`
+                    : `<span class="pill">Aktiv</span>` }
+                  ${canKick ? `<button class="kick-button button ghost" data-player-id="${p.id}" data-player-name="${escapeHtml(p.guest_name)}" style="padding: 4px 10px; font-size: 13px;">Kick</button>` : ""}
+                </div>
+              </article>`;
+          }).join("")
+        : `<p class="hint">Noch keine Spieler.</p>`;
+    }
 
-    el.movesList.innerHTML = renderMovesTimeline(state.moves, state.game?.last_animal);
+    // Verlauf: nur neu rendern wenn sich Züge oder Starttier wirklich geändert haben
+    const movesHash = JSON.stringify(state.moves.map(m => [m.animal_name || m.animal, m.guest_name || m.playerName])) + (state.game?.last_animal || "");
+    if (movesHash !== lastMovesHash) {
+      lastMovesHash = movesHash;
+      el.movesList.innerHTML = renderMovesTimeline(state.moves, state.game?.last_animal);
+    }
+
+    // Lobby-Bereiche automatisch einklappen sobald Spiel läuft
+    autoCollapseLobbyPanels(state.game?.status === "playing");
 
     if (state.game?.status === "playing" && activePlayers.length === 1 && state.players.length > 1) {
       setMessage(el.message, `${activePlayers[0].guest_name} gewinnt! Drücke "Neue Runde" um nochmal zu spielen.`, "success");
     }
   }
-}
 
+  function autoCollapseLobbyPanels(shouldCollapse) {
+    document.querySelectorAll('[data-collapsible="lobby"]').forEach(panel => {
+      // Nur automatisch einklappen wenn User es noch nicht manuell aufgemacht hat
+      if (shouldCollapse && !panel.dataset.userToggled) {
+        panel.classList.add("is-collapsed");
+      }
+    });
+  }
 function initLocalPage() {
   const state = {
     animals: [], players: [], moves: [],
