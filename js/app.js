@@ -153,10 +153,13 @@ function renderMovesTimeline(moves, startAnimal) {
     if (startAnimal) {
       return `
         <li class="move-item move-latest">
-          <div class="move-number">★</div>
+          <div class="move-avatar">★<span class="move-number-badge">0</span></div>
           <div class="move-content">
             <div class="move-animal">${highlightFirstAndLast(startAnimal)}</div>
-            <div class="move-player">Starttier</div>
+            <div class="move-player"><span class="move-player-icon">🎯</span>Starttier</div>
+          </div>
+          <div class="move-meta">
+            <span class="move-latest-tag">Start</span>
           </div>
         </li>
       `;
@@ -164,11 +167,48 @@ function renderMovesTimeline(moves, startAnimal) {
     return `
       <li class="moves-empty">
         <div class="moves-empty-icon">🦊</div>
-        <div>Noch keine Züge.<br>Das erste Tier wartet auf dich!</div>
+        <div class="moves-empty-text">Noch keine Züge.<br>Das erste Tier wartet auf dich!</div>
       </li>
     `;
   }
 
+  const total = moves.length;
+  // NEU: neueste Züge oben → Array umdrehen
+  const reversed = [...moves].reverse();
+
+  return reversed.map((move, idx) => {
+    // Im Original ist der LETZTE Move der neueste → nach reverse ist es der ERSTE
+    const isLatest = idx === 0;
+    const moveNumber = total - idx; // höchste Nummer oben
+    const animal = move.animal || move.animal_name || "";
+    const player = move.playerName || move.guest_name || "Unbekannt";
+    const animalHtml = highlightFirstAndLast(animal);
+    const playerName = escapeHtml(player);
+    const initials = getInitials(player);
+    const timeText = formatMoveTime(move);
+    function getInitials(name) {
+  const safe = String(name || "").trim();
+  if (!safe) return "?";
+  const parts = safe.split(/\s+/);
+  if (parts.length === 1) return escapeHtml(parts[0].charAt(0).toUpperCase());
+  return escapeHtml((parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase());
+}
+
+    return `
+      <li class="move-item ${isLatest ? "move-latest" : ""}">
+        <div class="move-avatar">${initials}<span class="move-number-badge">${moveNumber}</span></div>
+        <div class="move-content">
+          <div class="move-animal">${animalHtml}</div>
+          <div class="move-player"><span class="move-player-icon">👤</span>${playerName}</div>
+        </div>
+        <div class="move-meta">
+          ${isLatest ? `<span class="move-latest-tag">Neu</span>` : ""}
+          ${timeText ? `<div class="move-time">${timeText}</div>` : ""}
+        </div>
+      </li>
+    `;
+  }).join("");
+}
   const total = moves.length;
   return moves.map((move, index) => {
     const isLatest = index === total - 1;
