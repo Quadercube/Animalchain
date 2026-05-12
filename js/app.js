@@ -14,7 +14,7 @@ const supabaseClient = window.supabase
   : null;
 
 const page = document.body.dataset.page;
-console.log("Animalchain app.js v11 (Hardened) geladen");
+console.log("Animalchain app.js v12 (Timeline) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -50,7 +50,6 @@ function generateLobbyCode() {
   return code;
 }
 
-// === GEÄNDERT: createGame nutzt jetzt RPC statt direktem INSERT ===
 async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
   ensureSupabase();
   const { data, error } = await supabaseClient.rpc("create_game", {
@@ -68,7 +67,6 @@ async function createGame({ code, guestName, timerEnabled, turnSeconds }) {
   };
 }
 
-// === GEÄNDERT: nutzt View statt Tabelle ===
 async function findGameByCode(code) {
   ensureSupabase();
   const { data, error } = await supabaseClient
@@ -77,7 +75,6 @@ async function findGameByCode(code) {
   return data;
 }
 
-// === GEÄNDERT: nutzt View statt Tabelle ===
 async function loadGameById(gameId) {
   ensureSupabase();
   const { data, error } = await supabaseClient
@@ -86,7 +83,6 @@ async function loadGameById(gameId) {
   return data;
 }
 
-// === GEÄNDERT: nutzt View statt Tabelle ===
 async function loadGamePlayers(gameId) {
   ensureSupabase();
   const { data, error } = await supabaseClient
@@ -103,7 +99,6 @@ async function loadGameMoves(gameId) {
   return data || [];
 }
 
-// === GEÄNDERT: joinGame nutzt jetzt RPC statt direktem INSERT ===
 async function joinGame(game, guestName) {
   const { data, error } = await supabaseClient.rpc("join_game", {
     p_code: game.code,
@@ -116,7 +111,6 @@ async function joinGame(game, guestName) {
   };
 }
 
-// SICHERE Aktionen via RPC-Functions
 async function rpcMakeMove(gameId, playerId, playerSecret, animalName) {
   const { data, error } = await supabaseClient.rpc("make_move", {
     p_game_id: gameId, p_player_id: playerId,
@@ -149,6 +143,73 @@ async function rpcSelfEliminate(gameId, playerId, playerSecret) {
   if (error) throw new Error(error.message);
   return data;
 }
+
+// ============================================================
+//  TIMELINE-RENDERING (für alle drei Spielmodi)
+// ============================================================
+
+function renderMovesTimeline(moves, startAnimal) {
+  if (!moves || moves.length === 0) {
+    if (startAnimal) {
+      return `
+        <li class="move-item move-latest">
+          <div class="move-number">★</div>
+          <div class="move-content">
+            <div class="move-animal">${highlightFirstAndLast(startAnimal)}</div>
+            <div class="move-player">Starttier</div>
+          </div>
+        </li>
+      `;
+    }
+    return `
+      <li class="moves-empty">
+        <div class="moves-empty-icon">🦊</div>
+        <div>Noch keine Züge.<br>Das erste Tier wartet auf dich!</div>
+      </li>
+    `;
+  }
+
+  const total = moves.length;
+  return moves.map((move, index) => {
+    const isLatest = index === total - 1;
+    const number = index + 1;
+    const animal = move.animal || move.animal_name || "";
+    const player = move.playerName || move.guest_name || "Unbekannt";
+    const animalHtml = highlightFirstAndLast(animal);
+    const playerName = escapeHtml(player);
+    const timeText = formatMoveTime(move);
+
+    return `
+      <li class="move-item ${isLatest ? "move-latest" : ""}">
+        <div class="move-number">${number}</div>
+        <div class="move-content">
+          <div class="move-animal">${animalHtml}</div>
+          <div class="move-player">${playerName}</div>
+        </div>
+        ${timeText ? `<div class="move-time">${timeText}</div>` : ""}
+      </li>
+    `;
+  }).join("");
+}
+
+function highlightFirstAndLast(animalName) {
+  const safe = escapeHtml(animalName || "");
+  if (safe.length < 2) return safe;
+  const first = safe[0];
+  const last = safe[safe.length - 1];
+  const middle = safe.slice(1, -1);
+  return `<span class="letter-highlight">${first}</span>${middle}<span class="letter-highlight">${last}</span>`;
+}
+
+function formatMoveTime(move) {
+  const ts = move.created_at || move.createdAt || move.timestamp || move.played_at;
+  if (!ts) return "";
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+}
+
+// ============================================================
 
 function initPracticePage() {
   const state = { animals: [], lastAnimal: "Turmfalke", requiredLetter: "e", moves: [] };
@@ -221,7 +282,7 @@ function initPracticePage() {
   }
 
   function addMove(playerName, animalName) {
-    state.moves.push({ playerName, animal: toTitleCase(animalName) });
+    state.moves.push({ playerName, animal: toTitleCase(animalName), created_at: new Date().toISOString() });
     state.lastAnimal = toTitleCase(animalName);
     state.requiredLetter = getLastLetter(animalName);
   }
@@ -236,9 +297,7 @@ function initPracticePage() {
     el.lastAnimal.textContent = state.lastAnimal || "---";
     el.requiredLetter.textContent = state.requiredLetter ? state.requiredLetter.toUpperCase() : "---";
     el.moveCount.textContent = String(state.moves.length);
-    el.movesList.innerHTML = state.moves.length
-      ? state.moves.map((m) => `<li><strong>${escapeHtml(m.animal)}</strong><span class="hint">von ${escapeHtml(m.playerName)}</span></li>`).join("")
-      : `<li><strong>${escapeHtml(state.lastAnimal)}</strong><span class="hint">Starttier</span></li>`;
+    el.movesList.innerHTML = renderMovesTimeline(state.moves, state.lastAnimal);
   }
 }
 
@@ -609,9 +668,7 @@ function initOnlinePage() {
         }).join("")
       : `<p class="hint">Noch keine Spieler.</p>`;
 
-    el.movesList.innerHTML = state.moves.length
-      ? state.moves.map((m) => `<li><strong>${escapeHtml(m.animal_name)}</strong><span class="hint">von ${escapeHtml(m.guest_name || "Gast")}</span></li>`).join("")
-      : `<li><strong>${escapeHtml(state.game?.last_animal || "Turmfalke")}</strong><span class="hint">Starttier</span></li>`;
+    el.movesList.innerHTML = renderMovesTimeline(state.moves, state.game?.last_animal);
 
     if (state.game?.status === "playing" && activePlayers.length === 1 && state.players.length > 1) {
       setMessage(el.message, `${activePlayers[0].guest_name} gewinnt! Drücke "Neue Runde" um nochmal zu spielen.`, "success");
@@ -674,7 +731,11 @@ function initLocalPage() {
     const validation = validateLocalAnimal(animalName);
     if (!validation.ok) { setMessage(el.message, validation.message, validation.type); return; }
     const player = state.players[state.turnIndex];
-    state.moves.push({ playerName: player.name, animal: toTitleCase(animalName) });
+    state.moves.push({
+      playerName: player.name,
+      animal: toTitleCase(animalName),
+      created_at: new Date().toISOString()
+    });
     state.lastAnimal = toTitleCase(animalName);
     state.requiredLetter = getLastLetter(animalName);
     state.turnIndex = (state.turnIndex + 1) % state.players.length;
@@ -709,9 +770,7 @@ function initLocalPage() {
     el.moveCount.textContent = String(state.moves.length);
     el.turnBadge.textContent = state.started ? `${state.players[state.turnIndex].name} ist dran` : "Noch keine Runde";
 
-    el.movesList.innerHTML = state.moves.length
-      ? state.moves.map((m) => `<li><strong>${escapeHtml(m.animal)}</strong><span class="hint">von ${escapeHtml(m.playerName)}</span></li>`).join("")
-      : `<li><strong>${escapeHtml(state.lastAnimal)}</strong><span class="hint">Starttier</span></li>`;
+    el.movesList.innerHTML = renderMovesTimeline(state.moves, state.lastAnimal);
   }
 }
 
