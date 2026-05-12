@@ -725,15 +725,15 @@ function initOnlinePage() {
       lastMovesHash = movesHash;
       el.movesList.innerHTML = renderMovesTimeline(state.moves, state.game?.last_animal);
     }
-
-    // Lobby-Panels automatisch einklappen sobald Spiel läuft
-    autoCollapseLobbyPanels(state.game?.status === "playing");
-
-    if (state.game?.status === "playing" && activePlayers.length === 1 && state.players.length > 1) {
-      setMessage(el.message, `${activePlayers[0].guest_name} gewinnt! Drücke "Neue Runde" um nochmal zu spielen.`, "success");
-    }
+function autoCollapseLobbyPanels(shouldCollapse) {
+    if (!shouldCollapse) return;
+    document.querySelectorAll('[data-collapsible="lobby"]').forEach(panel => {
+      if (!panel.dataset.userToggled) {
+        panel.classList.add("is-collapsed");
+      }
+    });
+    updateRestoreBar();
   }
-
   function autoCollapseLobbyPanels(shouldCollapse) {
     document.querySelectorAll('[data-collapsible="lobby"]').forEach(panel => {
       if (shouldCollapse && !panel.dataset.userToggled) {
