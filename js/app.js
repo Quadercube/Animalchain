@@ -727,23 +727,18 @@ function initOnlinePage() {
     }
 function autoCollapseLobbyPanels(shouldCollapse) {
     if (!shouldCollapse) return;
+    let changed = false;
     document.querySelectorAll('[data-collapsible="lobby"]').forEach(panel => {
-      if (!panel.dataset.userToggled) {
+      if (!panel.dataset.userToggled && !panel.classList.contains("is-collapsed")) {
         panel.classList.add("is-collapsed");
+        changed = true;
       }
     });
-    updateRestoreBar();
+    if (changed) {
+      updateRestoreBar();
+      updatePageLayout();
+    }
   }
-  function autoCollapseLobbyPanels(shouldCollapse) {
-    document.querySelectorAll('[data-collapsible="lobby"]').forEach(panel => {
-      if (shouldCollapse && !panel.dataset.userToggled) {
-        panel.classList.add("is-collapsed");
-        const label = panel.querySelector(".collapsible-toggle .toggle-label");
-        if (label) label.textContent = "Ausklappen";
-      }
-    });
-  }
-}
 
 function initLocalPage() {
   const state = {
@@ -999,7 +994,7 @@ document.addEventListener("click", (event) => {
 
 // Collapsible Panels — komplett verstecken / wieder einblenden
 document.addEventListener("click", (event) => {
-  // Panel einklappen (X-Button im Panel)
+  // Panel einklappen (Pfeil-Button im Panel)
   const toggle = event.target.closest("[data-collapsible-toggle]");
   if (toggle) {
     event.preventDefault();
@@ -1008,10 +1003,11 @@ document.addEventListener("click", (event) => {
     panel.classList.add("is-collapsed");
     panel.dataset.userToggled = "1";
     updateRestoreBar();
+    updatePageLayout();
     return;
   }
 
-  // Panel wieder einblenden (Button in der Restore-Bar)
+  // Panel wieder einblenden (Pillen-Button oben)
   const restoreBtn = event.target.closest("[data-restore-panel]");
   if (restoreBtn) {
     event.preventDefault();
@@ -1022,6 +1018,7 @@ document.addEventListener("click", (event) => {
       panel.dataset.userToggled = "1";
     }
     updateRestoreBar();
+    updatePageLayout();
     return;
   }
 });
@@ -1036,16 +1033,38 @@ function updateRestoreBar() {
     bar.className = "restore-bar";
     main.parentNode.insertBefore(bar, main);
   }
+
+  // Jedem eingeklappten Panel eine ID geben, falls noch keine da
+  document.querySelectorAll(".collapsible").forEach(panel => {
+    if (!panel.id) panel.id = "panel-" + Math.random().toString(36).slice(2, 9);
+  });
+
   const hiddenPanels = document.querySelectorAll(".collapsible.is-collapsed");
   bar.innerHTML = Array.from(hiddenPanels).map(panel => {
-    const id = panel.id || (panel.id = "panel-" + Math.random().toString(36).slice(2, 9));
     const heading = panel.querySelector(".panel-heading h1, .panel-heading h2");
-    const title = heading ? heading.textContent.trim() : "Panel";
-    return `<button type="button" class="restore-button" data-restore-panel="${id}">${title} einblenden</button>`;
+    const eyebrow = panel.querySelector(".panel-heading .eyebrow");
+    let title = heading ? heading.textContent.trim() : "Panel";
+    if (eyebrow) title = eyebrow.textContent.trim() + ": " + title;
+    return `<button type="button" class="restore-button" data-restore-panel="${panel.id}">${escapeHtml(title)} einblenden</button>`;
   }).join("");
 }
 
-// Beim Laden der Seite Restore-Bar prüfen (für die Panels die schon initial eingeklappt sind)
+function updatePageLayout() {
+  const main = document.querySelector("main.page-grid");
+  if (!main) return;
+  // Wenn das erste (linke) Panel eingeklappt ist → Layout wird einspaltig (Spiel nutzt vollen Platz)
+  const firstPanel = main.querySelector(".panel");
+  if (firstPanel && firstPanel.classList.contains("is-collapsed")) {
+    main.classList.add("no-sidebar");
+  } else {
+    main.classList.remove("no-sidebar");
+  }
+}
+
+// Beim Laden der Seite Restore-Bar + Layout prüfen
 window.addEventListener("DOMContentLoaded", () => {
-  setTimeout(updateRestoreBar, 100);
+  setTimeout(() => {
+    updateRestoreBar();
+    updatePageLayout();
+  }, 100);
 });
