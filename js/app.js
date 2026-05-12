@@ -148,6 +148,8 @@ async function rpcSelfEliminate(gameId, playerId, playerSecret) {
 //  TIMELINE-RENDERING (für alle drei Spielmodi)
 // ============================================================
 
+const MOVES_VISIBLE_LIMIT = 5;
+
 function renderMovesTimeline(moves, startAnimal) {
   if (!moves || moves.length === 0) {
     if (startAnimal) {
@@ -173,29 +175,27 @@ function renderMovesTimeline(moves, startAnimal) {
   }
 
   const total = moves.length;
-  // NEU: neueste Züge oben → Array umdrehen
+  // Neuester Zug zuerst (Original-Array NICHT mutieren)
   const reversed = [...moves].reverse();
+  const hiddenCount = Math.max(0, total - MOVES_VISIBLE_LIMIT);
 
-  return reversed.map((move, idx) => {
-    // Im Original ist der LETZTE Move der neueste → nach reverse ist es der ERSTE
+  const itemsHtml = reversed.map((move, idx) => {
     const isLatest = idx === 0;
-    const moveNumber = total - idx; // höchste Nummer oben
+    const isHidden = idx >= MOVES_VISIBLE_LIMIT;
+    const moveNumber = total - idx;
     const animal = move.animal || move.animal_name || "";
     const player = move.playerName || move.guest_name || "Unbekannt";
     const animalHtml = highlightFirstAndLast(animal);
     const playerName = escapeHtml(player);
     const initials = getInitials(player);
     const timeText = formatMoveTime(move);
-    function getInitials(name) {
-  const safe = String(name || "").trim();
-  if (!safe) return "?";
-  const parts = safe.split(/\s+/);
-  if (parts.length === 1) return escapeHtml(parts[0].charAt(0).toUpperCase());
-  return escapeHtml((parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase());
-}
+
+    const classes = ["move-item"];
+    if (isLatest) classes.push("move-latest");
+    if (isHidden) classes.push("move-hidden");
 
     return `
-      <li class="move-item ${isLatest ? "move-latest" : ""}">
+      <li class="${classes.join(" ")}">
         <div class="move-avatar">${initials}<span class="move-number-badge">${moveNumber}</span></div>
         <div class="move-content">
           <div class="move-animal">${animalHtml}</div>
@@ -208,28 +208,59 @@ function renderMovesTimeline(moves, startAnimal) {
       </li>
     `;
   }).join("");
-}
-  const total = moves.length;
-  return moves.map((move, index) => {
-    const isLatest = index === total - 1;
-    const number = index + 1;
-    const animal = move.animal || move.animal_name || "";
-    const player = move.playerName || move.guest_name || "Unbekannt";
-    const animalHtml = highlightFirstAndLast(animal);
-    const playerName = escapeHtml(player);
-    const timeText = formatMoveTime(move);
+
+  // Toggle-Button NACH den ersten 5 Items einfügen
+  if (hiddenCount > 0) {
+    // Items aufsplitten und Toggle dazwischen einfügen
+    const visibleItems = reversed.slice(0, MOVES_VISIBLE_LIMIT);
+    const hiddenItems = reversed.slice(MOVES_VISIBLE_LIMIT);
+
+    const renderOne = (move, idx, offset = 0) => {
+      const realIdx = idx + offset;
+      const isLatest = realIdx === 0;
+      const isHidden = offset > 0;
+      const moveNumber = total - realIdx;
+      const animal = move.animal || move.animal_name || "";
+      const player = move.playerName || move.guest_name || "Unbekannt";
+      const animalHtml = highlightFirstAndLast(animal);
+      const playerName = escapeHtml(player);
+      const initials = getInitials(player);
+      const timeText = formatMoveTime(move);
+
+      const classes = ["move-item"];
+      if (isLatest) classes.push("move-latest");
+      if (isHidden) classes.push("move-hidden");
+
+      return `
+        <li class="${classes.join(" ")}">
+          <div class="move-avatar">${initials}<span class="move-number-badge">${moveNumber}</span></div>
+          <div class="move-content">
+            <div class="move-animal">${animalHtml}</div>
+            <div class="move-player"><span class="move-player-icon">👤</span>${playerName}</div>
+          </div>
+          <div class="move-meta">
+            ${isLatest ? `<span class="move-latest-tag">Neu</span>` : ""}
+            ${timeText ? `<div class="move-time">${timeText}</div>` : ""}
+          </div>
+        </li>
+      `;
+    };
+
+    const visibleHtml = visibleItems.map((m, i) => renderOne(m, i, 0)).join("");
+    const hiddenHtml = hiddenItems.map((m, i) => renderOne(m, i, MOVES_VISIBLE_LIMIT)).join("");
 
     return `
-      <li class="move-item ${isLatest ? "move-latest" : ""}">
-        <div class="move-number">${number}</div>
-        <div class="move-content">
-          <div class="move-animal">${animalHtml}</div>
-          <div class="move-player">${playerName}</div>
-        </div>
-        ${timeText ? `<div class="move-time">${timeText}</div>` : ""}
-      </li>
+      ${visibleHtml}
+      <button type="button" class="moves-toggle" data-moves-toggle>
+        <span class="toggle-label">Ältere Züge anzeigen</span>
+        <span class="toggle-count">+${hiddenCount}</span>
+        <span class="toggle-chevron">▼</span>
+      </button>
+      ${hiddenHtml}
     `;
-  }).join("");
+  }
+
+  return itemsHtml;
 }
 
 function highlightFirstAndLast(animalName) {
@@ -943,3 +974,27 @@ function setMessage(element, text, type = "") {
   element.textContent = text;
   element.className = `message ${type}`.trim();
 }
+// Toggle für "Ältere Züge anzeigen" — funktioniert für alle Spielmodi
+document.addEventListener("click", (event) => {
+  const toggle = event.target.closest("[data-moves-toggle]");
+  if (!toggle) return;
+  event.preventDefault();
+
+  const list = toggle.closest("ol, ul");
+  if (!list) return;
+
+  const hiddenItems = list.querySelectorAll(".move-hidden");
+  const isOpen = toggle.classList.toggle("is-open");
+  const label = toggle.querySelector(".toggle-label");
+
+  if (isOpen) {
+    hiddenItems.forEach((item, i) => {
+      // Gestaffelt einblenden für netten Effekt
+      setTimeout(() => item.classList.add("move-revealed"), i * 40);
+    });
+    if (label) label.textContent = "Weniger anzeigen";
+  } else {
+    hiddenItems.forEach((item) => item.classList.remove("move-revealed"));
+    if (label) label.textContent = "Ältere Züge anzeigen";
+  }
+});
