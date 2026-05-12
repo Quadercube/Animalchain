@@ -997,19 +997,55 @@ document.addEventListener("click", (event) => {
   }
 });
 
-// Collapsible Panels — manuell auf-/zuklappen
+// Collapsible Panels — komplett verstecken / wieder einblenden
 document.addEventListener("click", (event) => {
+  // Panel einklappen (X-Button im Panel)
   const toggle = event.target.closest("[data-collapsible-toggle]");
-  if (!toggle) return;
-  event.preventDefault();
-  const panel = toggle.closest("[data-collapsible]");
-  if (!panel) return;
-
-  panel.classList.toggle("is-collapsed");
-  panel.dataset.userToggled = "1";
-
-  const label = toggle.querySelector(".toggle-label");
-  if (label) {
-    label.textContent = panel.classList.contains("is-collapsed") ? "Ausklappen" : "Einklappen";
+  if (toggle) {
+    event.preventDefault();
+    const panel = toggle.closest("[data-collapsible]");
+    if (!panel) return;
+    panel.classList.add("is-collapsed");
+    panel.dataset.userToggled = "1";
+    updateRestoreBar();
+    return;
   }
+
+  // Panel wieder einblenden (Button in der Restore-Bar)
+  const restoreBtn = event.target.closest("[data-restore-panel]");
+  if (restoreBtn) {
+    event.preventDefault();
+    const panelId = restoreBtn.dataset.restorePanel;
+    const panel = document.getElementById(panelId);
+    if (panel) {
+      panel.classList.remove("is-collapsed");
+      panel.dataset.userToggled = "1";
+    }
+    updateRestoreBar();
+    return;
+  }
+});
+
+function updateRestoreBar() {
+  let bar = document.getElementById("restoreBar");
+  const main = document.querySelector("main.page-grid");
+  if (!main) return;
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "restoreBar";
+    bar.className = "restore-bar";
+    main.parentNode.insertBefore(bar, main);
+  }
+  const hiddenPanels = document.querySelectorAll(".collapsible.is-collapsed");
+  bar.innerHTML = Array.from(hiddenPanels).map(panel => {
+    const id = panel.id || (panel.id = "panel-" + Math.random().toString(36).slice(2, 9));
+    const heading = panel.querySelector(".panel-heading h1, .panel-heading h2");
+    const title = heading ? heading.textContent.trim() : "Panel";
+    return `<button type="button" class="restore-button" data-restore-panel="${id}">${title} einblenden</button>`;
+  }).join("");
+}
+
+// Beim Laden der Seite Restore-Bar prüfen (für die Panels die schon initial eingeklappt sind)
+window.addEventListener("DOMContentLoaded", () => {
+  setTimeout(updateRestoreBar, 100);
 });
