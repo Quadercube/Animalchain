@@ -1,3 +1,4 @@
+
 // js/app.js
 
 const ANIMALCHAIN_CONFIG = {
@@ -15,7 +16,7 @@ const supabaseClient = window.supabase
   : null;
 
 const page = document.body.dataset.page;
-console.log("Animalchain app.js v14 (Timeline+Toggle+Initials) geladen");
+console.log("Animalchain app.js v15 (NoFlicker+Collapse) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -174,7 +175,6 @@ function renderMovesTimeline(moves, startAnimal) {
   }
 
   const total = moves.length;
-  // Neuester Zug oben (Original-Array NICHT verändern)
   const reversed = [...moves].reverse();
   const hiddenCount = Math.max(0, total - MOVES_VISIBLE_LIMIT);
 
@@ -665,7 +665,8 @@ function initOnlinePage() {
     }
   }
 
- let lastMovesHash = "";
+  let lastMovesHash = "";
+  let lastPlayersHash = "";
   function render() {
     const currentPlayer = getCurrentOnlinePlayer();
     const activePlayers = state.players.filter((p) => !p.is_eliminated);
@@ -692,10 +693,10 @@ function initOnlinePage() {
       } else { startGameButton.hidden = true; }
     }
 
-    // Spieler-Liste: Hash-Check um unnötiges Neu-Rendern zu vermeiden
-    const playersHash = JSON.stringify(state.players.map(p => [p.id, p.guest_name, p.is_eliminated, p.turn_order])) + state.game?.status + state.game?.current_turn_order;
-    if (playersHash !== el.playersList._lastHash) {
-      el.playersList._lastHash = playersHash;
+    // Spielerliste: nur neu rendern wenn sich was geändert hat (verhindert Flackern)
+    const playersHash = JSON.stringify(state.players.map(p => [p.id, p.guest_name, p.is_eliminated, p.turn_order])) + "_" + (state.game?.status || "") + "_" + (state.game?.current_turn_order || "");
+    if (playersHash !== lastPlayersHash) {
+      lastPlayersHash = playersHash;
       el.playersList.innerHTML = state.players.length
         ? state.players.map((p) => {
             const isMe = p.id === state.localPlayer?.id;
@@ -718,14 +719,14 @@ function initOnlinePage() {
         : `<p class="hint">Noch keine Spieler.</p>`;
     }
 
-    // Verlauf: nur neu rendern wenn sich Züge oder Starttier wirklich geändert haben
-    const movesHash = JSON.stringify(state.moves.map(m => [m.animal_name || m.animal, m.guest_name || m.playerName])) + (state.game?.last_animal || "");
+    // Verlauf: nur neu rendern wenn sich Züge wirklich geändert haben (verhindert Flackern)
+    const movesHash = JSON.stringify(state.moves.map(m => [m.animal_name || m.animal, m.guest_name || m.playerName])) + "_" + (state.game?.last_animal || "");
     if (movesHash !== lastMovesHash) {
       lastMovesHash = movesHash;
       el.movesList.innerHTML = renderMovesTimeline(state.moves, state.game?.last_animal);
     }
 
-    // Lobby-Bereiche automatisch einklappen sobald Spiel läuft
+    // Lobby-Panels automatisch einklappen sobald Spiel läuft
     autoCollapseLobbyPanels(state.game?.status === "playing");
 
     if (state.game?.status === "playing" && activePlayers.length === 1 && state.players.length > 1) {
@@ -735,12 +736,15 @@ function initOnlinePage() {
 
   function autoCollapseLobbyPanels(shouldCollapse) {
     document.querySelectorAll('[data-collapsible="lobby"]').forEach(panel => {
-      // Nur automatisch einklappen wenn User es noch nicht manuell aufgemacht hat
       if (shouldCollapse && !panel.dataset.userToggled) {
         panel.classList.add("is-collapsed");
+        const label = panel.querySelector(".collapsible-toggle .toggle-label");
+        if (label) label.textContent = "Ausklappen";
       }
     });
   }
+}
+
 function initLocalPage() {
   const state = {
     animals: [], players: [], moves: [],
@@ -969,7 +973,7 @@ function setMessage(element, text, type = "") {
   element.className = `message ${type}`.trim();
 }
 
-// Toggle für "Ältere Züge anzeigen" — funktioniert für alle Spielmodi
+// Toggle für "Ältere Züge anzeigen"
 document.addEventListener("click", (event) => {
   const toggle = event.target.closest("[data-moves-toggle]");
   if (!toggle) return;
@@ -992,6 +996,7 @@ document.addEventListener("click", (event) => {
     if (label) label.textContent = "Ältere Züge anzeigen";
   }
 });
+
 // Collapsible Panels — manuell auf-/zuklappen
 document.addEventListener("click", (event) => {
   const toggle = event.target.closest("[data-collapsible-toggle]");
