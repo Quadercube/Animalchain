@@ -6,6 +6,7 @@ const ANIMALCHAIN_CONFIG = {
 };
 
 const LOCAL_ANIMALS_KEY = "animalchain_local_animals_v3_strict";
+const MOVES_VISIBLE_LIMIT = 5;
 
 const supabaseClient = window.supabase
   ? window.supabase.createClient(ANIMALCHAIN_CONFIG.supabaseUrl, ANIMALCHAIN_CONFIG.supabaseKey, {
@@ -14,7 +15,7 @@ const supabaseClient = window.supabase
   : null;
 
 const page = document.body.dataset.page;
-console.log("Animalchain app.js v12 (Timeline) geladen");
+console.log("Animalchain app.js v13 (Timeline+Toggle) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -148,8 +149,6 @@ async function rpcSelfEliminate(gameId, playerId, playerSecret) {
 //  TIMELINE-RENDERING (für alle drei Spielmodi)
 // ============================================================
 
-const MOVES_VISIBLE_LIMIT = 5;
-
 function renderMovesTimeline(moves, startAnimal) {
   if (!moves || moves.length === 0) {
     if (startAnimal) {
@@ -175,11 +174,11 @@ function renderMovesTimeline(moves, startAnimal) {
   }
 
   const total = moves.length;
-  // Neuester Zug zuerst (Original-Array NICHT mutieren)
+  // Neuester Zug oben (Original-Array NICHT verändern)
   const reversed = [...moves].reverse();
   const hiddenCount = Math.max(0, total - MOVES_VISIBLE_LIMIT);
 
-  const itemsHtml = reversed.map((move, idx) => {
+  const renderOne = (move, idx) => {
     const isLatest = idx === 0;
     const isHidden = idx >= MOVES_VISIBLE_LIMIT;
     const moveNumber = total - idx;
@@ -207,60 +206,26 @@ function renderMovesTimeline(moves, startAnimal) {
         </div>
       </li>
     `;
-  }).join("");
+  };
 
-  // Toggle-Button NACH den ersten 5 Items einfügen
   if (hiddenCount > 0) {
-    // Items aufsplitten und Toggle dazwischen einfügen
-    const visibleItems = reversed.slice(0, MOVES_VISIBLE_LIMIT);
-    const hiddenItems = reversed.slice(MOVES_VISIBLE_LIMIT);
-
-    const renderOne = (move, idx, offset = 0) => {
-      const realIdx = idx + offset;
-      const isLatest = realIdx === 0;
-      const isHidden = offset > 0;
-      const moveNumber = total - realIdx;
-      const animal = move.animal || move.animal_name || "";
-      const player = move.playerName || move.guest_name || "Unbekannt";
-      const animalHtml = highlightFirstAndLast(animal);
-      const playerName = escapeHtml(player);
-      const initials = getInitials(player);
-      const timeText = formatMoveTime(move);
-
-      const classes = ["move-item"];
-      if (isLatest) classes.push("move-latest");
-      if (isHidden) classes.push("move-hidden");
-
-      return `
-        <li class="${classes.join(" ")}">
-          <div class="move-avatar">${initials}<span class="move-number-badge">${moveNumber}</span></div>
-          <div class="move-content">
-            <div class="move-animal">${animalHtml}</div>
-            <div class="move-player"><span class="move-player-icon">👤</span>${playerName}</div>
-          </div>
-          <div class="move-meta">
-            ${isLatest ? `<span class="move-latest-tag">Neu</span>` : ""}
-            ${timeText ? `<div class="move-time">${timeText}</div>` : ""}
-          </div>
-        </li>
-      `;
-    };
-
-    const visibleHtml = visibleItems.map((m, i) => renderOne(m, i, 0)).join("");
-    const hiddenHtml = hiddenItems.map((m, i) => renderOne(m, i, MOVES_VISIBLE_LIMIT)).join("");
+    const visibleHtml = reversed.slice(0, MOVES_VISIBLE_LIMIT).map((m, i) => renderOne(m, i)).join("");
+    const hiddenHtml = reversed.slice(MOVES_VISIBLE_LIMIT).map((m, i) => renderOne(m, i + MOVES_VISIBLE_LIMIT)).join("");
 
     return `
       ${visibleHtml}
-      <button type="button" class="moves-toggle" data-moves-toggle>
-        <span class="toggle-label">Ältere Züge anzeigen</span>
-        <span class="toggle-count">+${hiddenCount}</span>
-        <span class="toggle-chevron">▼</span>
-      </button>
+      <li class="moves-toggle-wrap" style="list-style:none">
+        <button type="button" class="moves-toggle" data-moves-toggle>
+          <span class="toggle-label">Ältere Züge anzeigen</span>
+          <span class="toggle-count">+${hiddenCount}</span>
+          <span class="toggle-chevron">▼</span>
+        </button>
+      </li>
       ${hiddenHtml}
     `;
   }
 
-  return itemsHtml;
+  return reversed.map((m, i) => renderOne(m, i)).join("");
 }
 
 function highlightFirstAndLast(animalName) {
@@ -278,6 +243,14 @@ function formatMoveTime(move) {
   const date = new Date(ts);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+}
+
+function getInitials(name) {
+  const safe = String(name || "").trim();
+  if (!safe) return "?";
+  const parts = safe.split(/\s+/);
+  if (parts.length === 1) return escapeHtml(parts[0].charAt(0).toUpperCase());
+  return escapeHtml((parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase());
 }
 
 // ============================================================
@@ -974,6 +947,7 @@ function setMessage(element, text, type = "") {
   element.textContent = text;
   element.className = `message ${type}`.trim();
 }
+
 // Toggle für "Ältere Züge anzeigen" — funktioniert für alle Spielmodi
 document.addEventListener("click", (event) => {
   const toggle = event.target.closest("[data-moves-toggle]");
@@ -989,7 +963,6 @@ document.addEventListener("click", (event) => {
 
   if (isOpen) {
     hiddenItems.forEach((item, i) => {
-      // Gestaffelt einblenden für netten Effekt
       setTimeout(() => item.classList.add("move-revealed"), i * 40);
     });
     if (label) label.textContent = "Weniger anzeigen";
