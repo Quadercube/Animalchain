@@ -15,7 +15,7 @@ const supabaseClient = window.supabase
   : null;
 
 const page = document.body.dataset.page;
-console.log("Animalchain app.js v13 (Timeline+Toggle) geladen");
+console.log("Animalchain app.js v14 (Timeline+Toggle+Initials) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
