@@ -992,3 +992,19 @@ document.addEventListener("click", (event) => {
     if (label) label.textContent = "Ältere Züge anzeigen";
   }
 });
+// Collapsible Panels — manuell auf-/zuklappen
+document.addEventListener("click", (event) => {
+  const toggle = event.target.closest("[data-collapsible-toggle]");
+  if (!toggle) return;
+  event.preventDefault();
+  const panel = toggle.closest("[data-collapsible]");
+  if (!panel) return;
+
+  panel.classList.toggle("is-collapsed");
+  panel.dataset.userToggled = "1";
+
+  const label = toggle.querySelector(".toggle-label");
+  if (label) {
+    label.textContent = panel.classList.contains("is-collapsed") ? "Ausklappen" : "Einklappen";
+  }
+});
