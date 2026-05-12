@@ -67,3 +67,12 @@
   .move-animal{font-size:1.05rem}
   .move-item:not(:last-child)::after{left:28px}
 }
+/* ===== Einklappbare Panels ===== */
+.collapsible{transition:all .35s cubic-bezier(.4,0,.2,1)}
+.collapsible.is-collapsed{max-height:78px;overflow:hidden;opacity:.7}
+.collapsible.is-collapsed:hover{opacity:.95}
+.collapsible-toggle{position:absolute;top:18px;right:18px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 12px;border:1px solid var(--border);border-radius:999px;background:rgba(15,23,42,.6);color:var(--muted);font-family:inherit;font-size:.75rem;font-weight:700;letter-spacing:.4px;text-transform:uppercase;cursor:pointer;transition:all .2s ease;z-index:2}
+.collapsible-toggle:hover{border-color:rgba(125,211,252,.5);color:var(--accent);background:rgba(125,211,252,.08)}
+.collapsible-toggle .toggle-arrow{display:inline-block;font-size:.8rem;transition:transform .3s ease}
+.collapsible.is-collapsed .collapsible-toggle .toggle-arrow{transform:rotate(180deg)}
+.collapsible{position:relative}
