@@ -49,17 +49,20 @@
 
 /* ===== Einklappbare Panels ===== */
 .collapsible{position:relative;transition:max-height .4s cubic-bezier(.4,0,.2,1),opacity .35s ease,margin .35s ease,padding .35s ease,border-color .35s ease}
-.collapsible.is-collapsed{max-height:0;min-height:0;margin:0;padding:0;border-color:transparent;opacity:0;overflow:hidden;pointer-events:none}
+.collapsible.is-collapsed{max-height:0;min-height:0;margin:0;padding:0;border:0;opacity:0;overflow:hidden;pointer-events:none;visibility:hidden}
 .collapsible-toggle{position:absolute;top:18px;right:18px;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border);border-radius:999px;background:rgba(15,23,42,.6);color:var(--muted);font-family:inherit;font-size:.7rem;font-weight:800;letter-spacing:.4px;text-transform:uppercase;cursor:pointer;transition:all .2s ease;z-index:5}
 .collapsible-toggle:hover{border-color:rgba(125,211,252,.5);color:var(--accent);background:rgba(125,211,252,.1)}
 .collapsible-toggle .toggle-arrow{display:inline-block;font-size:.75rem;transition:transform .3s ease}
 
-/* ===== "Wieder einblenden"-Buttons oben in der Seite ===== */
-.restore-bar{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 16px;padding:0}
+/* "Wieder einblenden"-Buttons über der Seite */
+.restore-bar{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 18px;padding:0;list-style:none}
 .restore-bar:empty{display:none}
-.restore-button{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px dashed var(--border);border-radius:999px;background:rgba(15,23,42,.5);color:var(--muted);font-family:inherit;font-size:.78rem;font-weight:700;letter-spacing:.3px;cursor:pointer;transition:all .2s ease}
+.restore-button{display:inline-flex;align-items:center;gap:8px;padding:9px 16px;border:1px dashed var(--border);border-radius:999px;background:rgba(15,23,42,.5);color:var(--muted);font-family:inherit;font-size:.8rem;font-weight:700;letter-spacing:.3px;cursor:pointer;transition:all .2s ease}
 .restore-button:hover{border-color:rgba(125,211,252,.5);border-style:solid;background:rgba(125,211,252,.1);color:var(--accent);transform:translateY(-1px)}
-.restore-button::before{content:"+";font-size:1rem;font-weight:900;line-height:0;margin-right:2px}
+.restore-button::before{content:"+";display:inline-block;font-size:1.1rem;font-weight:900;line-height:.8;color:var(--accent2)}
+
+/* Page-Grid passt sich an wenn linkes Panel eingeklappt ist */
+.page-grid.no-sidebar{grid-template-columns:1fr}
 
 @keyframes moveSlideIn{
   from{opacity:0;transform:translateY(-12px) scale(.96)}
