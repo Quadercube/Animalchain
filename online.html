@@ -22,7 +22,12 @@
     </nav>
 
     <main class="page-grid">
-      <section class="panel">
+      <section class="panel collapsible" data-collapsible="lobby">
+        <button type="button" class="collapsible-toggle" data-collapsible-toggle>
+          <span class="toggle-label">Einklappen</span>
+          <span class="toggle-arrow">▲</span>
+        </button>
+
         <div class="panel-heading">
           <p class="eyebrow">Online</p>
           <h1>Lobby</h1>
@@ -131,7 +136,12 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel collapsible is-collapsed" data-collapsible="lobby">
+        <button type="button" class="collapsible-toggle" data-collapsible-toggle>
+          <span class="toggle-label">Ausklappen</span>
+          <span class="toggle-arrow">▲</span>
+        </button>
+
         <div class="panel-heading">
           <p class="eyebrow">Lokal</p>
           <h2>Tier hinzufügen</h2>
