@@ -1,9 +1,8 @@
-
 // js/app.js
 
 const ANIMALCHAIN_CONFIG = {
   supabaseUrl: "https://xbncxguszajafewaullp.supabase.co",
-  supabaseKey: "sb_publishable_cft_HvPmZgUTVRKI8aFYTg_YMO4HnNF"
+  supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhibmN4Z3VzemFqYWZld2F1bGxwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0OTMyMjIsImV4cCI6MjA5MzA2OTIyMn0.SmsP4udyYq9SSbVj-70_CyqlkPjyS2lzUM5jhFtRSPQ"
 };
 
 const LOCAL_ANIMALS_KEY = "animalchain_local_animals_v3_strict";
@@ -16,7 +15,7 @@ const supabaseClient = window.supabase
   : null;
 
 const page = document.body.dataset.page;
-console.log("Animalchain app.js v15 (NoFlicker+Collapse) geladen");
+console.log("Animalchain app.js v16 (Collapse-Restore) geladen");
 
 if (page === "practice") initPracticePage();
 if (page === "online") initOnlinePage();
@@ -725,7 +724,16 @@ function initOnlinePage() {
       lastMovesHash = movesHash;
       el.movesList.innerHTML = renderMovesTimeline(state.moves, state.game?.last_animal);
     }
-function autoCollapseLobbyPanels(shouldCollapse) {
+
+    // Lobby-Panels automatisch einklappen sobald Spiel läuft
+    autoCollapseLobbyPanels(state.game?.status === "playing");
+
+    if (state.game?.status === "playing" && activePlayers.length === 1 && state.players.length > 1) {
+      setMessage(el.message, `${activePlayers[0].guest_name} gewinnt! Drücke "Neue Runde" um nochmal zu spielen.`, "success");
+    }
+  }
+
+  function autoCollapseLobbyPanels(shouldCollapse) {
     if (!shouldCollapse) return;
     let changed = false;
     document.querySelectorAll('[data-collapsible="lobby"]').forEach(panel => {
@@ -1059,8 +1067,8 @@ function updatePageLayout() {
     main.classList.add("no-sidebar");
   } else {
     main.classList.remove("no-sidebar");
-      }
-    }
+  }
+}
 
 // Beim Laden der Seite Restore-Bar + Layout prüfen
 window.addEventListener("DOMContentLoaded", () => {
